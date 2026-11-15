@@ -7,12 +7,15 @@ struct RightNowCard: View {
     var carryOver: [DoseInstance] = []
     var onTaken: (DoseInstance, Date) -> Void
     var onSkip: (DoseInstance) -> Void
+    /// Corrects when a taken dose was taken.
+    var onChangeTaken: (DoseInstance, Date) -> Void = { _, _ in }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let state = MedsEngine.rightNow(instances: instances, now: context.date, carryOver: carryOver)
             VStack(alignment: .leading, spacing: 0) {
-                FoodStatusBand(food: state.food, now: context.date, onTaken: onTaken)
+                FoodStatusBand(food: state.food, now: context.date, takenDose: takenDose(for: state.food),
+                               onTaken: onTaken, onChangeTaken: onChangeTaken)
                 VStack(alignment: .leading, spacing: 16) {
                     if let due = state.due.first {
                         DueDoseView(instance: due, extraDue: state.due.count - 1, now: context.date,
@@ -73,6 +76,14 @@ struct RightNowCard: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Today's taken dose behind a running "after" pause, so its taken time can be corrected from here.
+    private func takenDose(for food: RightNowState.Food) -> DoseInstance? {
+        guard case .noFood(let window) = food, window.isConfirmed, window.part != .before else { return nil }
+        return instances
+            .filter { $0.isTaken && window.reasons.contains($0.medication.shortName) && $0.anchor <= window.end }
+            .max { $0.anchor < $1.anchor }
+    }
+
     private func foodKey(_ food: RightNowState.Food) -> String {
         switch food {
         case .noFood(let w): "no-\(w.start.timeIntervalSince1970)-\(w.end.timeIntervalSince1970)"
@@ -88,7 +99,14 @@ private struct FoodStatusBand: View {
     @Environment(\.medsPerson) private var person
     var food: RightNowState.Food
     var now: Date
+    var takenDose: DoseInstance?
     var onTaken: (DoseInstance, Date) -> Void
+    var onChangeTaken: (DoseInstance, Date) -> Void
+
+    @State private var editing = false
+    @State private var editTime: Date = .now
+    /// Fixed when the wheel opens so it never snaps back while scrolling.
+    @State private var editUpper: Date = .now
 
     var body: some View {
         switch food {
@@ -148,6 +166,12 @@ private struct FoodStatusBand: View {
                     }
                     Spacer(minLength: 0)
                 }
+                if let takenDose, let takenAt = takenDose.log?.takenAt {
+                    takenChip(takenDose, takenAt: takenAt)
+                    if editing {
+                        correctionWheel(takenDose)
+                    }
+                }
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Theme.surface.opacity(0.7))
@@ -162,7 +186,9 @@ private struct FoodStatusBand: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.coralSoft)
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: editing)
+            .onChange(of: takenDose?.id) { editing = false }
 
         case .foodOK(let next):
             HStack(alignment: .top, spacing: 14) {
@@ -191,6 +217,67 @@ private struct FoodStatusBand: View {
         }
     }
 
+    /// "Iron taken 1:28 PM ⌄": tap to correct the taken time.
+    private func takenChip(_ instance: DoseInstance, takenAt: Date) -> some View {
+        Button {
+            Haptics.select()
+            if editing { editing = false; return }
+            editUpper = .now
+            editTime = min(takenAt, editUpper)
+            editing = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("\(instance.medication.shortName) taken \(takenAt.formatted(date: .omitted, time: .shortened))")
+                    .font(.bloom(.subheadline, weight: .semibold))
+                    .monospacedDigit()
+                Image(systemName: editing ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(Theme.coralDeep)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(Theme.surface.opacity(0.85), in: .rect(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("\(instance.medication.shortName) taken at \(takenAt.formatted(date: .omitted, time: .shortened))")
+        .accessibilityHint("Change when it was taken")
+        .accessibilityIdentifier("rightnow-taken-time")
+    }
+
+    private func correctionWheel(_ instance: DoseInstance) -> some View {
+        let start = PregnancyMath.calendar.startOfDay(for: instance.scheduledAt)
+        let range = start...max(start, editUpper)
+        return VStack(spacing: 4) {
+            DatePicker("Taken at", selection: $editTime, in: range, displayedComponents: .hourAndMinute)
+                .datePickerStyle(.wheel)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, maxHeight: 140)
+                .clipped()
+                .accessibilityIdentifier("rightnow-taken-wheel")
+            HStack {
+                Button("Cancel") { editing = false }
+                    .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
+                Spacer()
+                Text("Taken at")
+                    .font(.bloom(.footnote))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button("Save") {
+                    editing = false
+                    onChangeTaken(instance, min(max(editTime, range.lowerBound), range.upperBound))
+                }
+                .buttonStyle(BloomSoftButtonStyle())
+                .font(.bloom(.body, weight: .semibold))
+                .accessibilityIdentifier("rightnow-taken-save")
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Theme.surface.opacity(0.85), in: .rect(cornerRadius: 14, style: .continuous))
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
     private func icon(_ symbol: String, tint: Color) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 20, weight: .bold))
@@ -215,6 +302,7 @@ func remainingText(_ interval: TimeInterval) -> String {
 
 private struct DueDoseView: View {
     @Environment(\.medsPerson) private var person
+    @Environment(AppStore.self) private var store
     var instance: DoseInstance
     var extraDue: Int
     var now: Date
@@ -230,6 +318,8 @@ private struct DueDoseView: View {
     @State private var when: When = .now
     @State private var picking = false
     @State private var pickedTime: Date = .now
+    /// Latest pickable time, fixed when the wheel opens so it never snaps back to now.
+    @State private var pickUpper: Date = .now
 
     var body: some View {
         let med = instance.medication
@@ -294,11 +384,20 @@ private struct DueDoseView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picking)
+        .onAppear {
+            // After an accidental undo, restoring is one tap on Taken.
+            if let before = store.takenTimeBeforeUndo(instance) { when = .picked(before) }
+        }
     }
 
     /// "Now" · "Planned (8:00 AM)" · "Pick a time…"
     private var timeChip: some View {
         Menu {
+            if let before = store.takenTimeBeforeUndo(instance) {
+                Button { choose(.picked(before)) } label: {
+                    Label("Taken at \(before.formatted(date: .omitted, time: .shortened)) (before undo)", systemImage: "arrow.uturn.backward.circle")
+                }
+            }
             Button { choose(.now) } label: { Label("Now", systemImage: "clock") }
             if instance.scheduledAt <= now {
                 Button { choose(.planned) } label: {
@@ -306,7 +405,9 @@ private struct DueDoseView: View {
                 }
             }
             Button {
-                pickedTime = min(max(instance.scheduledAt, pickRange.lowerBound), pickRange.upperBound)
+                pickUpper = .now
+                let current: Date = if case .picked(let d) = when { d } else { min(instance.scheduledAt, pickUpper) }
+                pickedTime = min(max(current, pickRange.lowerBound), pickRange.upperBound)
                 when = .picked(pickedTime)
                 picking = true
                 Haptics.select()
@@ -353,9 +454,10 @@ private struct DueDoseView: View {
         }
     }
 
+    /// Midnight up to when the wheel opened.
     private var pickRange: ClosedRange<Date> {
-        let start = PregnancyMath.calendar.startOfDay(for: now)
-        return start...max(start, now)
+        let start = PregnancyMath.calendar.startOfDay(for: pickUpper)
+        return start...max(start, pickUpper)
     }
 
     private var subtitle: String {

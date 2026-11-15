@@ -108,6 +108,7 @@ enum LiveActivityController {
         for activity in live {
             Task {
                 await activity.end(finalContent, dismissalPolicy: immediately ? .immediate : .after(.now.addingTimeInterval(30 * 60)))
+                PushRegistry.shared.activityEnded(activity)
             }
         }
     }

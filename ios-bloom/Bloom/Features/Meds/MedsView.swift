@@ -19,6 +19,8 @@ struct MedsView: View {
     @State private var showQuiz = false
     @State private var showBox = false
     @State private var path = NavigationPath()
+    /// An older log waiting for "Undo … taken at …?" confirmation.
+    @State private var pendingUndo: DoseInstance?
 
     private var cal: Calendar { PregnancyMath.calendar }
     private var today: Date { cal.startOfDay(for: store.now) }
@@ -151,6 +153,20 @@ struct MedsView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.undoToast?.id)
+        .alert(pendingUndo.map(undoQuestion) ?? "", isPresented: Binding(
+            get: { pendingUndo != nil },
+            set: { if !$0 { pendingUndo = nil } }
+        ), presenting: pendingUndo) { instance in
+            Button("Undo", role: .destructive) {
+                store.undo(instance)
+                pendingUndo = nil
+            }
+            Button("Keep", role: .cancel) { pendingUndo = nil }
+        } message: { instance in
+            if let line = store.loggedByLine(instance.log) {
+                Text(line)
+            }
+        }
         .onChange(of: today) { oldValue, newValue in
             // Follow the calendar across midnight when the user was looking at "today".
             if cal.isDate(selectedDay, inSameDayAs: oldValue) { selectedDay = newValue }
@@ -332,7 +348,8 @@ struct MedsView: View {
                     instances: instances,
                     carryOver: visibleCarryOver,
                     onTaken: { store.markTaken($0, at: $1, placement: .top) },
-                    onSkip: { store.skip($0) }
+                    onSkip: { store.skip($0) },
+                    onChangeTaken: { store.changeTakenTime($0, to: $1, placement: .top) }
                 )
                 if let change = store.scheduleChange, change.placement == .top,
                    cal.isDate(change.date, inSameDayAs: selectedDay), person == nil || change.owner == person {
@@ -350,9 +367,26 @@ struct MedsView: View {
         DoseActions(
             taken: { store.markTaken($0, at: $1, placement: .row($0.medication.id)) },
             skip: { store.skip($0) },
-            undo: { store.undo($0) },
+            undo: { instance in
+                // Fresh logs undo straight away; older ones were probably right, so ask first.
+                if let log = instance.log, Date.now.timeIntervalSince(log.loggedAt) > 10 * 60 {
+                    Haptics.tap()
+                    pendingUndo = instance
+                } else {
+                    store.undo(instance)
+                }
+            },
+            changeTaken: { store.changeTakenTime($0, to: $1, placement: .row($0.medication.id)) },
             edit: { med in openEditor(store.medications.first { $0.id == med.id } ?? med) }
         )
+    }
+
+    private func undoQuestion(_ instance: DoseInstance) -> String {
+        let name = instance.medication.shortName
+        if let log = instance.log, log.status == .taken, let takenAt = log.takenAt {
+            return "Undo \(name) taken at \(takenAt.formatted(date: .omitted, time: .shortened))?"
+        }
+        return "Undo \(name) skipped?"
     }
 
     private var emptyState: some View {

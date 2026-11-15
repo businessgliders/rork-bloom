@@ -200,6 +200,18 @@ final class AppStore {
     var celebration: SlotCelebration?
     var undoToast: UndoToast?
 
+    /// Taken times cleared by an undo, by dose key, so an accidental undo is one tap to restore.
+    /// Kept on this phone only; a new log of that dose clears its entry.
+    private(set) var undoneTakenTimes: [String: Date] = {
+        let raw = UserDefaults.standard.dictionary(forKey: "meds.undoneTakenTimes") as? [String: Double] ?? [:]
+        let cutoff = Date.now.addingTimeInterval(-2 * 86_400).timeIntervalSince1970
+        return raw.filter { $0.value > cutoff }.mapValues { Date(timeIntervalSince1970: $0) }
+    }() {
+        didSet {
+            UserDefaults.standard.set(undoneTakenTimes.mapValues(\.timeIntervalSince1970), forKey: "meds.undoneTakenTimes")
+        }
+    }
+
     /// Bumped every minute so date-driven views refresh across midnight.
     var now: Date = .now
 
@@ -521,9 +533,12 @@ final class AppStore {
     }
 
     /// Clears the log so the dose is pending again (and its food window returns to the planned time).
+    /// A taken time is remembered so logging it again offers "Taken at … (before undo)".
     func undo(medicationID: UUID, scheduledAt: Date) {
         for log in doseLogs where log.medicationID == medicationID && abs(log.scheduledAt.timeIntervalSince(scheduledAt)) < 30 {
-            enqueue(.dose, SyncOp.doseKey(medicationID: log.medicationID, scheduledAt: log.scheduledAt))
+            let key = SyncOp.doseKey(medicationID: log.medicationID, scheduledAt: log.scheduledAt)
+            enqueue(.dose, key)
+            if log.status == .taken, let takenAt = log.takenAt { undoneTakenTimes[key] = takenAt }
         }
         doseLogs.removeAll { $0.medicationID == medicationID && abs($0.scheduledAt.timeIntervalSince(scheduledAt)) < 30 }
         undoToast = nil
@@ -533,6 +548,29 @@ final class AppStore {
 
     func undo(_ instance: DoseInstance) {
         undo(medicationID: instance.medication.id, scheduledAt: instance.scheduledAt)
+    }
+
+    /// The taken time an undo cleared for this dose, if it's still pending.
+    func takenTimeBeforeUndo(_ instance: DoseInstance) -> Date? {
+        guard instance.isPending else { return nil }
+        return undoneTakenTimes[SyncOp.doseKey(medicationID: instance.medication.id, scheduledAt: instance.scheduledAt)]
+    }
+
+    /// Corrects when a taken dose was taken, without undoing it. Keeps who logged it.
+    /// Food windows and later doses recalculate from the new time; the change panel shows only if later doses move.
+    func changeTakenTime(_ instance: DoseInstance, to takenAt: Date, placement: ScheduleChange.Placement) {
+        guard let index = doseLogs.firstIndex(where: {
+            $0.medicationID == instance.medication.id && abs($0.scheduledAt.timeIntervalSince(instance.scheduledAt)) < 30 && $0.status == .taken
+        }) else { return }
+        let clamped = min(takenAt, .now)
+        guard doseLogs[index].takenAt != clamped else { return }
+        doseLogs[index].takenAt = clamped
+        enqueue(.dose, SyncOp.doseKey(medicationID: instance.medication.id, scheduledAt: instance.scheduledAt))
+        undoToast = nil
+        now = .now
+        saveAndReschedule()
+        proposeAfterLogging(instance, placement: placement)
+        Haptics.success()
     }
 
     /// Used by the notification "Taken" action, widget and Live Activity buttons.
@@ -566,7 +604,9 @@ final class AppStore {
     private func setLog(for instance: DoseInstance, status: DoseStatus, takenAt: Date?) {
         doseLogs.removeAll { $0.medicationID == instance.medication.id && abs($0.scheduledAt.timeIntervalSince(instance.scheduledAt)) < 30 }
         doseLogs.append(DoseLog(medicationID: instance.medication.id, scheduledAt: instance.scheduledAt, status: status, takenAt: takenAt, loggedBy: myUserID))
-        enqueue(.dose, SyncOp.doseKey(medicationID: instance.medication.id, scheduledAt: instance.scheduledAt))
+        let key = SyncOp.doseKey(medicationID: instance.medication.id, scheduledAt: instance.scheduledAt)
+        enqueue(.dose, key)
+        if undoneTakenTimes[key] != nil { undoneTakenTimes[key] = nil }
         now = .now
         saveAndReschedule()
     }

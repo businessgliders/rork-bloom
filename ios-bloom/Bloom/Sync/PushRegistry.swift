@@ -20,13 +20,25 @@ final class PushRegistry {
     private var startToken: String? {
         didSet { UserDefaults.standard.set(startToken, forKey: "push.start") }
     }
-    /// activity.id → (token, takerID)
-    private var updateTokens: [String: (token: String, takerID: String)] = [:]
+    /// activity.id → (token, takerID). Saved so a row can still be deleted after a relaunch
+    /// when the activity ended while the app wasn't running.
+    private var updateTokens: [String: (token: String, takerID: String)] = [:] {
+        didSet {
+            let raw = updateTokens.mapValues { [$0.token, $0.takerID] }
+            UserDefaults.standard.set(raw, forKey: "push.update")
+        }
+    }
     private var observedActivities: Set<String> = []
 
     private init() {
         apnsToken = UserDefaults.standard.string(forKey: "push.apns")
         startToken = UserDefaults.standard.string(forKey: "push.start")
+        let raw = UserDefaults.standard.dictionary(forKey: "push.update") as? [String: [String]] ?? [:]
+        updateTokens = raw.compactMapValues { $0.count == 2 ? (token: $0[0], takerID: $0[1]) : nil }
+    }
+
+    private static func isOver(_ state: ActivityState) -> Bool {
+        state == .ended || state == .dismissed
     }
 
     func start() {
@@ -47,6 +59,7 @@ final class PushRegistry {
         for activity in Activity<BloomActivityAttributes>.activities {
             observe(activity)
         }
+        Task { await sweepEnded() }
         Task {
             for await activity in Activity<BloomActivityAttributes>.activityUpdates {
                 self.observe(activity)
@@ -56,11 +69,17 @@ final class PushRegistry {
 
     private func observe(_ activity: Activity<BloomActivityAttributes>) {
         guard !observedActivities.contains(activity.id) else { return }
-        observedActivities.insert(activity.id)
         let takerID = activity.attributes.takerID
+        // Already over (e.g. ended while the app was closed): just clean up its row.
+        if Self.isOver(activity.activityState) {
+            Task { await self.removeUpdateToken(activityID: activity.id, takerID: takerID) }
+            return
+        }
+        observedActivities.insert(activity.id)
 
         Task {
             for await data in activity.pushTokenUpdates {
+                guard !Self.isOver(activity.activityState) else { break }
                 let hex = data.hexString
                 if let old = self.updateTokens[activity.id], old.token == hex { continue }
                 self.updateTokens[activity.id] = (hex, takerID)
@@ -68,21 +87,50 @@ final class PushRegistry {
             }
         }
         Task {
-            for await state in activity.activityStateUpdates {
-                if state == .ended || state == .dismissed {
-                    if let entry = self.updateTokens.removeValue(forKey: activity.id) {
-                        await self.delete(token: entry.token, kind: .update)
-                    }
-                    self.observedActivities.remove(activity.id)
-                    break
-                }
+            for await state in activity.activityStateUpdates where Self.isOver(state) {
+                await self.removeUpdateToken(activityID: activity.id, takerID: takerID)
+                self.observedActivities.remove(activity.id)
+                break
             }
         }
+    }
+
+    /// Called right after the app ends an activity, so the row goes even if the state stream is late.
+    func activityEnded(_ activity: Activity<BloomActivityAttributes>) {
+        Task { await removeUpdateToken(activityID: activity.id, takerID: activity.attributes.takerID) }
+    }
+
+    /// Deletes rows for saved activities that are no longer running on this phone.
+    private func sweepEnded() async {
+        let running = Set(Activity<BloomActivityAttributes>.activities
+            .filter { !Self.isOver($0.activityState) }
+            .map(\.id))
+        for (activityID, entry) in updateTokens where !running.contains(activityID) {
+            await removeUpdateToken(activityID: activityID, takerID: entry.takerID)
+        }
+    }
+
+    /// Removes the `live_activity_update` row by token and by activity id.
+    private func removeUpdateToken(activityID: String, takerID: String) async {
+        let entry = updateTokens[activityID]
+        guard AppStore.shared.myUserID != nil else { return }
+        var ok = true
+        if let entry { ok = await delete(token: entry.token, kind: .update) }
+        do {
+            try await Backend.client.from("device_tokens")
+                .delete()
+                .eq("type", value: Kind.update.rawValue)
+                .eq("activity_id", value: "\(takerID):\(activityID)")
+                .execute()
+        } catch { ok = false }
+        // Keep the entry on failure so the next launch or foreground retries.
+        if ok { updateTokens[activityID] = nil }
     }
 
     /// Re-sends every known token (after sign-in, joining, or a pregnancy change).
     func registerAll() {
         Task {
+            await sweepEnded()
             if let startToken { await upsert(token: startToken, kind: .start, activityID: nil) }
             for (activityID, entry) in updateTokens {
                 await upsert(token: entry.token, kind: .update, activityID: "\(entry.takerID):\(activityID)")
@@ -107,7 +155,7 @@ final class PushRegistry {
         if AppStore.shared.partnerAlertsEnabled {
             await upsert(token: apnsToken, kind: .apns, activityID: nil)
         } else {
-            await delete(token: apnsToken, kind: .apns)
+            _ = await delete(token: apnsToken, kind: .apns)
         }
     }
 
@@ -143,15 +191,19 @@ final class PushRegistry {
         }
     }
 
-    private func delete(token: String, kind: Kind) async {
-        guard AppStore.shared.myUserID != nil else { return }
+    @discardableResult
+    private func delete(token: String, kind: Kind) async -> Bool {
+        guard AppStore.shared.myUserID != nil else { return false }
         do {
             try await Backend.client.from("device_tokens")
                 .delete()
                 .eq("token", value: token)
                 .eq("type", value: kind.rawValue)
                 .execute()
-        } catch {}
+            return true
+        } catch {
+            return false
+        }
     }
 }
 

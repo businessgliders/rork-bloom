@@ -199,14 +199,17 @@ struct MedsTodayList: View {
         case .dose(let instance):
             let med = instance.medication
             let movable = canMove(instance)
+            let correctable = canLog && instance.isTaken
             TodayDoseRow(
                 instance: instance,
                 canLog: canLog,
                 actions: actions,
                 previewMinutes: previewMinutes(instance),
-                isEditingTime: picker?.entryID == entry.id && isMovePicker,
+                isEditingTime: picker?.entryID == entry.id && (isMovePicker || correctable),
                 hasWarning: instance.isPending && warnings.contains(med.id),
-                onTimeTap: movable ? { openMovePicker(entryID: entry.id, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) } : nil,
+                onTimeTap: movable
+                    ? { openMovePicker(entryID: entry.id, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) }
+                    : correctable ? { openLogPicker(entryID: entry.id, instance: instance) } : nil,
                 onWarning: { review(instance) },
                 onPickTime: { openLogPicker(entryID: entry.id, instance: instance) }
             )
@@ -266,14 +269,17 @@ struct MedsTodayList: View {
     private func openLogPicker(entryID: String, instance: DoseInstance) {
         Haptics.select()
         store.scheduleChange = nil
-        let upper = logRange(instance).upperBound
-        let start = min(instance.log?.takenAt ?? (isToday ? .now : instance.scheduledAt), upper)
-        picker = InlinePicker(entryID: entryID, mode: .log(instance), time: start)
+        if picker?.entryID == entryID, case .log = picker?.mode { picker = nil; return }
+        // The upper bound freezes when the wheel opens, so the wheel never snaps back while she scrolls.
+        let upper = logRange(instance, now: .now).upperBound
+        let start = min(instance.log?.takenAt ?? store.takenTimeBeforeUndo(instance) ?? (isToday ? .now : instance.scheduledAt), upper)
+        picker = InlinePicker(entryID: entryID, mode: .log(instance), time: start, upper: upper)
     }
 
-    private func logRange(_ instance: DoseInstance) -> ClosedRange<Date> {
+    /// Any time on the dose's day from midnight up to now.
+    private func logRange(_ instance: DoseInstance, now: Date) -> ClosedRange<Date> {
         let start = PregnancyMath.calendar.startOfDay(for: instance.scheduledAt)
-        let end = max(start, min(Date.now, PregnancyMath.addDays(1, to: start).addingTimeInterval(-60)))
+        let end = max(start, min(now, PregnancyMath.addDays(1, to: start).addingTimeInterval(-60)))
         return start...end
     }
 
@@ -288,7 +294,7 @@ struct MedsTodayList: View {
 
     private func pickerRow(_ value: InlinePicker) -> some View {
         let range: ClosedRange<Date> = switch value.mode {
-        case .log(let instance): logRange(instance)
+        case .log(let instance): logRange(instance, now: value.upper ?? .now)
         case .move: moveRange(value.mode)
         }
         return VStack(spacing: 4) {
@@ -324,7 +330,7 @@ struct MedsTodayList: View {
         picker = nil
         switch value.mode {
         case .log(let instance):
-            actions.taken(instance, time)
+            if instance.isTaken { actions.changeTaken(instance, time) } else { actions.taken(instance, time) }
         case .move(let id, let owner, let isMeal):
             let m = ScheduleEngine.roundNearest(minutes(time))
             let edit: DayEdit = isMeal ? .meal(id, m) : .dose(id, m)
@@ -354,6 +360,8 @@ private struct InlinePicker: Equatable {
     var entryID: String
     var mode: Mode
     var time: Date
+    /// Latest time the log wheel allows, fixed when it opened.
+    var upper: Date?
 
     var title: String {
         switch mode {
@@ -365,7 +373,7 @@ private struct InlinePicker: Equatable {
     var doneLabel: String {
         switch mode {
         case .move: "Move"
-        case .log: "Log"
+        case .log(let instance): instance.isTaken ? "Save" : "Log"
         }
     }
 }
@@ -526,7 +534,7 @@ private struct TodayDoseRow: View {
             } else {
                 EditableTime(text: clock(instance.anchor), editable: onTimeTap != nil, isEditing: isEditingTime)
                     .font(.bloom(.subheadline, weight: .heavy))
-                    .foregroundStyle(instance.isPending ? (onTimeTap == nil ? Theme.text : Theme.blushDeep) : Theme.textSecondary)
+                    .foregroundStyle(onTimeTap != nil ? Theme.blushDeep : (instance.isPending ? Theme.text : Theme.textSecondary))
             }
         }
         .monospacedDigit()
@@ -539,7 +547,9 @@ private struct TodayDoseRow: View {
         if let onTimeTap {
             Button(action: onTimeTap) { label }
                 .buttonStyle(PressableStyle())
-                .accessibilityLabel("Change \(instance.medication.shortName) time, \(clock(instance.anchor))")
+                .accessibilityLabel(instance.isTaken
+                    ? "Change when \(instance.medication.shortName) was taken, \(clock(instance.anchor))"
+                    : "Change \(instance.medication.shortName) time, \(clock(instance.anchor))")
                 .accessibilityHint("Opens a time wheel under the row")
                 .accessibilityIdentifier("today-time-\(instance.medication.shortName)")
         } else {
@@ -552,6 +562,11 @@ private struct TodayDoseRow: View {
         let med = instance.medication
         return Menu {
             if instance.isPending {
+                if let before = store.takenTimeBeforeUndo(instance) {
+                    Button { actions.taken(instance, before) } label: {
+                        Label("Taken at \(clock(before)) (before undo)", systemImage: "arrow.uturn.backward.circle")
+                    }
+                }
                 Button { actions.taken(instance, nowTime) } label: { Label("Now", systemImage: "checkmark.circle") }
                 if instance.scheduledAt <= .now {
                     Button { actions.taken(instance, instance.scheduledAt) } label: {
