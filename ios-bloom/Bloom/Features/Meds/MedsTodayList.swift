@@ -186,6 +186,13 @@ struct MedsTodayList: View {
         return t
     }
 
+    /// The time a dose's label shows while the wheel spins or a change is pending, when it differs from now.
+    private func previewMinutes(_ instance: DoseInstance) -> Int? {
+        guard let shown = previewInstances.first(where: { $0.id == instance.id }),
+              shown.anchor != instance.anchor else { return nil }
+        return minutes(shown.anchor)
+    }
+
     @ViewBuilder
     private func row(_ entry: Entry, warnings: Set<UUID>) -> some View {
         switch entry {
@@ -196,7 +203,7 @@ struct MedsTodayList: View {
                 instance: instance,
                 canLog: canLog,
                 actions: actions,
-                previewMinutes: pendingMinutes(med.id),
+                previewMinutes: previewMinutes(instance),
                 isEditingTime: picker?.entryID == entry.id && isMovePicker,
                 hasWarning: instance.isPending && warnings.contains(med.id),
                 onTimeTap: movable ? { openMovePicker(entryID: entry.id, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) } : nil,
