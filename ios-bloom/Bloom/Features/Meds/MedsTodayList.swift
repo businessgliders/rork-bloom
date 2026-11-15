@@ -444,11 +444,11 @@ private struct SpanRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.bloom(.subheadline, weight: .semibold))
+                    .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(tint)
                 if !detail.isEmpty {
                     Text(isDragging ? "Drag to change · release to review" : detail)
-                        .font(.bloom(.footnote))
+                        .font(.bloom(.footnote, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
                 }
@@ -467,9 +467,9 @@ private struct SpanRow: View {
     private var timeLabel: some View {
         let label = VStack(alignment: .trailing, spacing: 0) {
             Text(clock(start))
-            Text(clock(end))
+            Text(clock(end)).opacity(0.7)
         }
-        .font(.bloom(.caption, weight: isDragging ? .semibold : .regular))
+        .font(.bloom(.caption, weight: .bold))
         .monospacedDigit()
         .foregroundStyle(isDragging ? Theme.sageDeep : (onTimeTap == nil ? Theme.textSecondary : Theme.blushDeep))
         .lineLimit(1)
@@ -516,7 +516,7 @@ private struct TodayDoseRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(med.shortName)
-                        .font(.bloom(.body, weight: .semibold))
+                        .font(.bloom(.headline, weight: .heavy))
                         .foregroundStyle(Theme.text)
                         .strikethrough(instance.isSkipped, color: Theme.textSecondary)
                         .lineLimit(2)
@@ -542,11 +542,11 @@ private struct TodayDoseRow: View {
                         .transition(.opacity)
                 } else if isDragging {
                     Text("Drag to change · release to review")
-                        .font(.bloom(.footnote))
+                        .font(.bloom(.footnote, weight: .semibold))
                         .foregroundStyle(Theme.blushDeep)
                 } else {
                     Text(statusText)
-                        .font(.bloom(.footnote))
+                        .font(.bloom(.footnote, weight: .semibold))
                         .foregroundStyle(statusColor)
                         .lineLimit(2)
                 }
@@ -574,7 +574,7 @@ private struct TodayDoseRow: View {
     private var barColor: Color {
         if brokenReason != nil { return Theme.coral }
         if instance.isTaken { return Theme.sage }
-        if instance.isSkipped { return Color(uiColor: .systemGray3) }
+        if instance.isSkipped { return Theme.surfaceMuted }
         return Theme.blush
     }
 
@@ -583,12 +583,12 @@ private struct TodayDoseRow: View {
         let label = VStack(alignment: .trailing, spacing: 0) {
             if let dragMinutes {
                 Text(ScheduleEngine.clock(dragMinutes))
-                    .font(.bloom(.subheadline, weight: .semibold))
+                    .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(Theme.blushDeep)
                     .contentTransition(.numericText())
             } else {
                 Text(clock(instance.anchor))
-                    .font(.bloom(.subheadline))
+                    .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(instance.isPending ? (onTimeTap == nil ? Theme.text : Theme.blushDeep) : Theme.textSecondary)
                     .opacity(previewMinutes == nil ? 1 : 0.45)
                 if let previewMinutes {
@@ -640,9 +640,8 @@ private struct TodayDoseRow: View {
             Button { actions.edit(med) } label: { Label("Edit medication", systemImage: "pencil") }
         } label: {
             Image(systemName: instance.isTaken ? "checkmark.circle.fill" : (instance.isSkipped ? "minus.circle.fill" : "circle"))
-                .font(.system(size: 26, weight: .regular))
-                .foregroundStyle(instance.isTaken ? Theme.sageDeep : (instance.isSkipped ? Theme.textSecondary : Theme.blushDeep))
-                .symbolEffect(.bounce, value: instance.isTaken)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(instance.isTaken ? Theme.sage : (instance.isSkipped ? Theme.textSecondary.opacity(0.6) : Theme.blush))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 44, height: 44)
         } primaryAction: {
@@ -687,11 +686,11 @@ private struct NowLine: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("Now")
-                .font(.bloom(.caption, weight: .semibold))
+                .font(.bloom(.caption, weight: .heavy))
                 .foregroundStyle(Theme.blushDeep)
                 .frame(width: timeWidth, alignment: .trailing)
             Circle().fill(Theme.blushDeep).frame(width: 7, height: 7)
-            Rectangle().fill(Theme.blushDeep).frame(height: 1)
+            Rectangle().fill(Theme.blushDeep.opacity(0.6)).frame(height: 1.5)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 4)

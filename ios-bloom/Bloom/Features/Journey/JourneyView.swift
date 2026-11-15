@@ -17,41 +17,45 @@ struct JourneyView: View {
                 let weekNumber = browseWeek ?? age.contentWeek
                 AdaptiveColumns {
                     // Wide, left pane: progress ring + This week.
-                    List {
-                        weekSections(profile: profile, age: age, weekNumber: weekNumber)
+                    ScrollView {
+                        weekSection(profile: profile, age: age, weekNumber: weekNumber)
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 32)
+                            .frame(maxWidth: 560)
+                            .frame(maxWidth: .infinity)
                     }
-                    .listStyle(.insetGrouped)
-                    .duoListClearance()
-                    .frame(maxWidth: 560)
-                    .frame(maxWidth: .infinity)
-                    .background(Theme.canvas)
                 } secondary: {
                     // Wide, right pane: the full timeline.
                     TimelinePane()
                 } compact: {
                     // Regular iPhones, Duo outer display, tall inner display.
-                    List {
-                        weekSections(profile: profile, age: age, weekNumber: weekNumber)
-                        timelineSection
+                    ScrollView {
+                        VStack(spacing: 28) {
+                            weekSection(profile: profile, age: age, weekNumber: weekNumber)
+                            TimelineStrip(
+                                milestones: store.sortedMilestones,
+                                onSelect: { editingMilestone = MilestoneEditorItem(milestone: $0) },
+                                onAdd: { editingMilestone = MilestoneEditorItem(milestone: nil) }
+                            )
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 32)
+                        .frame(maxWidth: 640)
+                        .frame(maxWidth: .infinity)
                     }
-                    .listStyle(.insetGrouped)
-                    .duoListClearance()
-                    .frame(maxWidth: 680)
-                    .frame(maxWidth: .infinity)
-                    .background(Theme.canvas)
+                    .background(BloomBackground())
                 }
-                .navigationTitle(browseWeek.map { "Week \($0)" } ?? age.headline)
-                .navigationBarTitleDisplayMode(.large)
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             showSettings = true
                         } label: {
-                            Label("Settings", systemImage: "gearshape")
+                            Label("Settings", systemImage: "gearshape.fill")
                         }
-                        .tint(Theme.blushDeep)
+                        .tint(Theme.textSecondary)
                     }
                 }
+                .toolbarBackground(.hidden, for: .navigationBar)
                 .navigationDestination(for: TimelineRoute.self) { _ in
                     FullTimelineView()
                 }
@@ -72,71 +76,21 @@ struct JourneyView: View {
     }
 
     @ViewBuilder
-    private func weekSections(profile: PregnancyProfile, age: GestationalAge, weekNumber: Int) -> some View {
-        Section {
+    private func weekSection(profile: PregnancyProfile, age: GestationalAge, weekNumber: Int) -> some View {
+        VStack(spacing: 28) {
             WeekHeroView(
                 profile: profile,
                 age: age,
                 browseWeek: $browseWeek,
+                onEditDates: { showDates = true },
                 onOpenWeek: { detailWeek = WeekSheetItem(week: weekNumber) }
             )
-        }
 
-        Section {
-            if browseWeek == nil {
-                Button { showDates = true } label: {
-                    LabeledContent {
-                        Text(age.daysToGoText)
-                            .foregroundStyle(Theme.textSecondary)
-                    } label: {
-                        Text("Due \(profile.dueDate.formatted(.dateTime.month(.wide).day().year()))")
-                            .foregroundStyle(Theme.text)
-                    }
-                }
-                .accessibilityHint("Edit due date")
-            } else {
-                Button {
-                    Haptics.select()
-                    withAnimation(.snappy) { browseWeek = nil }
-                } label: {
-                    Label("Back to this week", systemImage: "arrow.uturn.backward")
-                        .foregroundStyle(Theme.blushDeep)
+            if let content = WeekLibrary.week(weekNumber) {
+                ThisWeekCard(content: content, profile: profile, isCurrent: browseWeek == nil) {
+                    detailWeek = WeekSheetItem(week: weekNumber)
                 }
             }
-        }
-
-        if let content = WeekLibrary.week(weekNumber) {
-            ThisWeekSection(content: content, profile: profile, isCurrent: browseWeek == nil) {
-                detailWeek = WeekSheetItem(week: weekNumber)
-            }
-        }
-    }
-
-    /// The next few milestones as plain rows, with a link to the full timeline.
-    @ViewBuilder
-    private var timelineSection: some View {
-        let upcoming = Array(store.sortedMilestones.filter { !$0.isPast(store.now) }.prefix(3))
-        Section {
-            ForEach(upcoming) { milestone in
-                Button { editingMilestone = MilestoneEditorItem(milestone: milestone) } label: {
-                    MilestoneRow(milestone: milestone, isPast: false)
-                }
-                .buttonStyle(.plain)
-            }
-            NavigationLink(value: TimelineRoute()) {
-                Text("See full timeline")
-                    .foregroundStyle(Theme.blushDeep)
-            }
-            Button {
-                editingMilestone = MilestoneEditorItem(milestone: nil)
-            } label: {
-                Label("Add a milestone", systemImage: "plus")
-                    .foregroundStyle(Theme.blushDeep)
-            }
-        } header: {
-            Text("Coming up")
-        } footer: {
-            Text("Typical; your provider's schedule may differ.")
         }
     }
 }
@@ -155,76 +109,112 @@ struct MilestoneEditorItem: Identifiable {
 
 // MARK: - Hero
 
-/// Week browser, progress ring and the size comparison as text.
 struct WeekHeroView: View {
     var profile: PregnancyProfile
     var age: GestationalAge
     @Binding var browseWeek: Int?
+    var onEditDates: () -> Void
     var onOpenWeek: () -> Void
+
+    @State private var bob = false
 
     private var shownWeek: Int { browseWeek ?? age.contentWeek }
     private var content: WeekContent? { WeekLibrary.week(shownWeek) }
-    private var progress: Double {
-        browseWeek == nil ? age.ringProgress : Double(shownWeek * 7) / 280
-    }
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                chevron("chevron.left", enabled: shownWeek > 1) { shift(-1) }
-                Spacer()
+        VStack(spacing: 14) {
+            VStack(spacing: 6) {
                 Text(caption)
-                    .font(.bloom(.subheadline))
+                    .font(.bloom(.subheadline, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
-                    .contentTransition(.numericText())
-                Spacer()
-                chevron("chevron.right", enabled: shownWeek < 42) { shift(1) }
+
+                HStack(spacing: 4) {
+                    chevron("chevron.left", enabled: shownWeek > 1) { shift(-1) }
+                    Text(browseWeek == nil ? age.headline : "Week \(shownWeek)")
+                        .font(.bloom(.largeTitle, weight: .heavy))
+                        .foregroundStyle(Theme.text)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                        .contentTransition(.numericText())
+                        .frame(maxWidth: .infinity)
+                    chevron("chevron.right", enabled: shownWeek < 42) { shift(1) }
+                }
+
+                if browseWeek == nil {
+                    Button(action: onEditDates) {
+                        Label("\(age.daysToGoText) · Due \(profile.dueDate.formatted(.dateTime.month(.abbreviated).day()))", systemImage: "pencil")
+                            .font(.bloom(.subheadline, weight: .bold))
+                            .foregroundStyle(Theme.text)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Theme.blushSoft, in: .capsule)
+                    }
+                    .buttonStyle(PressableStyle())
+                    .accessibilityHint("Edit due date")
+                } else {
+                    Button {
+                        Haptics.select()
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { browseWeek = nil }
+                    } label: {
+                        Label("Back to today", systemImage: "arrow.uturn.backward")
+                            .font(.bloom(.subheadline, weight: .bold))
+                            .foregroundStyle(Theme.sageDeep)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Theme.sageSoft, in: .capsule)
+                    }
+                    .buttonStyle(PressableStyle())
+                }
             }
 
             Button(action: onOpenWeek) {
-                VStack(spacing: 16) {
-                    ZStack {
-                        ProgressRing(progress: progress, lineWidth: 12)
-                        VStack(spacing: 0) {
-                            Text("\(shownWeek)")
-                                .font(.system(.largeTitle, weight: .bold))
+                ZStack {
+                    ProgressRing(
+                        progress: browseWeek == nil ? age.ringProgress : Double(shownWeek * 7) / 280,
+                        lineWidth: 20
+                    )
+                    VStack(spacing: 10) {
+                        ZStack(alignment: .topTrailing) {
+                            BlobShape(seed: shownWeek)
+                                .fill(Theme.peachSoft)
+                                .frame(width: 200, height: 170)
+                            Text(content?.emoji ?? "🌱")
+                                .font(.system(size: 92))
+                                .frame(width: 200, height: 170)
+                                .offset(y: bob ? -5 : 4)
+                                .contentTransition(.interpolate)
+                            ShineMarks()
+                                .offset(x: -14, y: 8)
+                        }
+                        VStack(spacing: 4) {
+                            Text("\(profile.babyName) is \(content?.sizeSentence ?? "growing")")
+                                .font(.bloom(.headline, weight: .bold))
                                 .foregroundStyle(Theme.text)
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                            Text(shownWeek == 1 ? "week" : "weeks")
-                                .font(.bloom(.subheadline))
-                                .foregroundStyle(Theme.textSecondary)
-                            Text("\(Int((min(progress, 1) * 100).rounded()))%")
-                                .font(.bloom(.caption, weight: .semibold))
-                                .foregroundStyle(Theme.blushDeep)
-                                .monospacedDigit()
-                                .padding(.top, 4)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.8)
+                            if let measurement = content?.measurementText {
+                                Text(measurement)
+                                    .font(.bloom(.subheadline))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
                         }
-                    }
-                    .frame(width: 168, height: 168)
-
-                    VStack(spacing: 4) {
-                        Text(content?.sizeLabel ?? "Growing")
-                            .font(.bloom(.headline, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                            .multilineTextAlignment(.center)
-                        if let measurement = content?.measurementText {
-                            Text(measurement)
-                                .font(.bloom(.subheadline))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
+                        .padding(.horizontal, 40)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .contentShape(.rect)
+                .fittedSquare(330)
+                .padding(.horizontal, 4)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableStyle())
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Week \(shownWeek). \(content?.sizeLabel ?? ""). \(content?.measurementText ?? "")")
+            .accessibilityLabel("\(profile.babyName) is \(content?.sizeSentence ?? ""). \(content?.measurementText ?? "")")
             .accessibilityHint("Opens this week's details")
         }
-        .padding(.vertical, 8)
-        .animation(.snappy, value: shownWeek)
+        .padding(.top, 4)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: shownWeek)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { bob = true }
+        }
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -245,12 +235,10 @@ struct WeekHeroView: View {
     private func chevron(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(enabled ? Theme.blushDeep : Color(uiColor: .tertiaryLabel))
-                .frame(width: 44, height: 44)
-                .contentShape(.rect)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.textSecondary.opacity(enabled ? 1 : 0.3))
+                .frame(width: 36, height: 44)
         }
-        .buttonStyle(.borderless)
         .disabled(!enabled)
         .accessibilityLabel(symbol == "chevron.left" ? "Previous week" : "Next week")
     }
@@ -259,7 +247,7 @@ struct WeekHeroView: View {
         let target = min(max(shownWeek + delta, 1), 42)
         guard target != shownWeek else { return }
         Haptics.select()
-        withAnimation(.snappy) {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
             browseWeek = target == age.contentWeek ? nil : target
         }
     }
@@ -267,52 +255,55 @@ struct WeekHeroView: View {
 
 // MARK: - This week
 
-struct ThisWeekSection: View {
+struct ThisWeekCard: View {
     var content: WeekContent
     var profile: PregnancyProfile
     var isCurrent: Bool
     var onMore: () -> Void
 
     var body: some View {
-        Section {
-            row(symbol: "figure.child", title: profile.babyName,
+        VStack(alignment: .leading, spacing: 4) {
+            Text(isCurrent ? "This week" : "Week \(content.week)")
+                .font(.bloom(.title, weight: .heavy))
+                .foregroundStyle(Theme.text)
+                .padding(.bottom, 8)
+
+            row(symbol: "shoeprints.fill", tint: Theme.sage, title: profile.babyName,
                 text: content.babyText(name: profile.babyName))
-            row(symbol: "person", title: profile.momName,
+            Divider().overlay(Theme.ringTrack)
+            row(symbol: "person.fill", tint: Theme.blush, title: profile.momName,
                 text: content.momText(name: profile.momName))
-            row(symbol: "person.2",
+            Divider().overlay(Theme.ringTrack)
+            row(symbol: "person.2.fill", tint: Theme.peach,
                 title: profile.hasPartner ? profile.partnerName : "Partner",
                 text: content.partnerText(mom: profile.momName, baby: profile.babyName))
+
             Button(action: onMore) {
-                HStack {
+                HStack(spacing: 6) {
                     Text("More about week \(content.week)")
-                        .foregroundStyle(Theme.blushDeep)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                    Image(systemName: "arrow.right")
                 }
+                .font(.bloom(.subheadline, weight: .bold))
+                .foregroundStyle(Theme.blushDeep)
             }
-        } header: {
-            Text(isCurrent ? "This week" : "Week \(content.week)")
+            .padding(.top, 8)
         }
+        .bloomCard(padding: 22)
     }
 
-    private func row(symbol: String, title: String, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+    private func row(symbol: String, tint: Color, title: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
             Image(systemName: symbol)
-                .font(.body)
-                .foregroundStyle(Theme.blushDeep)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.bloom(.subheadline, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                Text(text)
-                    .font(.bloom(.body))
-                    .foregroundStyle(Theme.text)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(tint, in: .circle)
+            Text("\(Text("\(title):").fontWeight(.heavy)) \(text)")
+                .font(.bloom(.body))
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 10)
     }
 }

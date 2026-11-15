@@ -119,7 +119,7 @@ enum MedNotifications {
 
                 if instance.scheduledAt > now {
                     let content = UNMutableNotificationContent()
-                    content.title = person.map { "\($0): time for \(med.shortName)" } ?? "Time for \(med.shortName)"
+                    content.title = person.map { "\(med.emoji) \($0): time for \(med.shortName)" } ?? "\(med.emoji) Time for \(med.shortName)"
                     var body = med.dose.isEmpty ? "" : med.dose
                     switch med.foodRule {
                     case .emptyStomach where med.noFoodAfterMinutes > 0:
@@ -140,10 +140,10 @@ enum MedNotifications {
                     if pauseAt > now {
                         let content = UNMutableNotificationContent()
                         if let person {
-                            content.title = "\(person): snack pause"
+                            content.title = "\(person): snack pause 🍓"
                             content.body = "\(med.shortName) in \(Medication.durationText(med.noFoodBeforeMinutes)). Time for \(person) to finish eating."
                         } else {
-                            content.title = "Snack pause"
+                            content.title = "Snack pause 🍓"
                             content.body = "\(med.shortName) in \(Medication.durationText(med.noFoodBeforeMinutes)). Finish eating now so your tummy is empty."
                         }
                         content.sound = .default
@@ -158,10 +158,10 @@ enum MedNotifications {
                     let content = UNMutableNotificationContent()
                     let reasons = window.reasons.joined(separator: " & ")
                     if let person {
-                        content.title = "\(person) can eat again"
+                        content.title = "\(person) can eat again 🍽️"
                         content.body = "The no-food window for \(reasons) is over."
                     } else {
-                        content.title = "You can eat again"
+                        content.title = "You can eat again 🍽️"
                         content.body = "Your no-food window for \(reasons) is over. Enjoy!"
                     }
                     content.sound = .default

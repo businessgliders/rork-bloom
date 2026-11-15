@@ -38,15 +38,15 @@ struct MedsPersonSwitcher: View {
             HStack(spacing: 6) {
                 Text(owner == .mom ? "🤰" : "🫶").font(.system(size: 15))
                 Text(title)
-                    .font(.bloom(.subheadline, weight: .semibold))
+                    .font(.bloom(.subheadline, weight: .bold))
                     .lineLimit(1)
                 if count > 0 {
                     Text("\(count)")
-                        .font(.bloom(.caption, weight: .semibold))
+                        .font(.bloom(.caption, weight: .heavy))
                         .foregroundStyle(selected ? Theme.blushDeep : Theme.textSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(selected ? Theme.surface : Theme.surfaceMuted, in: .capsule)
+                        .background(selected ? Color.white.opacity(0.7) : Theme.surfaceMuted, in: .capsule)
                 }
             }
             .foregroundStyle(selected ? Theme.blushDeep : Theme.textSecondary)

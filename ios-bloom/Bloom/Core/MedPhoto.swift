@@ -55,7 +55,7 @@ enum MedPhotoStore {
     }
 }
 
-/// The round badge for a medication: its photo when there is one, otherwise a pill symbol.
+/// The round badge for a medication: its photo when there is one, otherwise its emoji.
 struct MedBadge: View {
     var medication: Medication
     var size: CGFloat = 46
@@ -72,9 +72,8 @@ struct MedBadge: View {
                     .clipShape(.circle)
                     .overlay(Circle().stroke(fill, lineWidth: max(2, size * 0.06)))
             } else {
-                Image(systemName: "pills.fill")
-                    .font(.system(size: size * 0.4, weight: .medium))
-                    .foregroundStyle(Theme.blushDeep)
+                Text(medication.emoji)
+                    .font(.system(size: size * 0.52))
                     .frame(width: size, height: size)
                     .background(fill, in: .circle)
             }

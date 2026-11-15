@@ -223,7 +223,7 @@ final class RemindersSync {
     }
 
     static func title(for instance: DoseInstance) -> String {
-        instance.medication.shortName
+        "\(instance.medication.emoji) \(instance.medication.shortName)"
     }
 
     private static func format(bloom: Bool, reminder: Bool) -> String { "\(bloom ? 1 : 0)|\(reminder ? 1 : 0)" }

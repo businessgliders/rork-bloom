@@ -133,7 +133,7 @@ struct MilestoneEditorView: View {
                 .foregroundStyle(Theme.sageDeep)
             VStack(alignment: .leading, spacing: 2) {
                 Text("A completed memory")
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Text("Add a photo or a note to remember it by.")
                     .font(.bloom(.subheadline))

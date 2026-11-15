@@ -72,20 +72,20 @@ struct JourneyWidgetView: View {
                 .gaugeStyle(.accessoryCircularCapacity)
             case .accessoryRectangular:
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Week \(age.weeks)").font(.bloom(.headline, weight: .semibold))
+                    Text("\(entry.week?.emoji ?? "🌱") Week \(age.weeks)").font(.bloom(.headline, weight: .heavy))
                     Text(daysToGoText(age)).font(.bloom(.caption))
                     Gauge(value: min(age.ringProgress, 1)) { EmptyView() }.gaugeStyle(.accessoryLinearCapacity)
                 }
                 .widgetAccentable()
             case .accessoryInline:
-                Text("Week \(age.weeks) · \(daysToGoText(age))")
+                Text("\(entry.week?.emoji ?? "🌱") Week \(age.weeks) · \(daysToGoText(age))")
             default: small(age: age)
             }
         } else {
             VStack(spacing: 6) {
-                StatusIcon(symbol: "calendar", size: 34, tint: Theme.blush)
+                Text("🌸").font(.system(size: 34))
                 Text("Open Bloom to start your journey")
-                    .font(.bloom(.caption, weight: .semibold))
+                    .font(.bloom(.caption, weight: .bold))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -94,16 +94,8 @@ struct JourneyWidgetView: View {
 
     private func ring(age: GestationalAge, size: CGFloat) -> some View {
         ZStack {
-            ProgressRing(progress: age.ringProgress, lineWidth: size * 0.08)
-            VStack(spacing: -2) {
-                Text("\(age.weeks)")
-                    .font(.system(size: size * 0.34, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.text)
-                Text(age.weeks == 1 ? "week" : "weeks")
-                    .font(.system(size: size * 0.12))
-                    .foregroundStyle(Theme.textSecondary)
-            }
+            ProgressRing(progress: age.ringProgress, lineWidth: size * 0.075)
+            EmojiBlob(emoji: entry.week?.emoji ?? "🌱", size: size * 0.7)
         }
         .frame(width: size, height: size)
     }
@@ -112,14 +104,11 @@ struct JourneyWidgetView: View {
         VStack(spacing: 6) {
             ring(age: age, size: 84)
             VStack(spacing: 0) {
-                Text(entry.week?.sizeLabel ?? "Week \(age.weeks)")
-                    .font(.bloom(.caption, weight: .semibold))
+                Text("Week \(age.weeks)")
+                    .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
                 Text(daysToGoText(age))
-                    .font(.bloom(.caption2, weight: .semibold))
+                    .font(.bloom(.caption2, weight: .bold))
                     .foregroundStyle(Theme.blushDeep)
             }
         }
@@ -132,20 +121,18 @@ struct JourneyWidgetView: View {
             VStack(alignment: .leading, spacing: 4) {
                 WidgetCaption(text: age.trimesterTitle, color: Theme.sageDeep)
                 Text(age.headline)
-                    .font(.bloom(.title3, weight: .semibold))
+                    .font(.bloom(.title3, weight: .heavy))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if let week = entry.week {
-                    Text(week.sizeLabel)
-                        .font(.bloom(.caption))
+                    Text("\(profile.babyName) is \(week.sizeSentence)")
+                        .font(.bloom(.caption, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 2)
-                Text(daysToGoText(age))
-                    .font(.bloom(.subheadline, weight: .semibold))
-                    .foregroundStyle(Theme.blushDeep)
+                WidgetChip(text: daysToGoText(age), symbol: "heart.fill", tint: Theme.blushDeep, fill: Theme.blushSoft)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

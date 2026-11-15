@@ -18,7 +18,7 @@ struct TimelineStrip: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Your timeline")
-                        .font(.bloom(.title, weight: .bold))
+                        .font(.bloom(.title, weight: .heavy))
                         .foregroundStyle(Theme.text)
                     Text("Typical; your provider's schedule may differ.")
                         .font(.bloom(.footnote))
@@ -27,7 +27,7 @@ struct TimelineStrip: View {
                 Spacer()
                 NavigationLink(value: TimelineRoute()) {
                     Text("See all")
-                        .font(.bloom(.subheadline, weight: .semibold))
+                        .font(.bloom(.subheadline, weight: .bold))
                         .foregroundStyle(Theme.blushDeep)
                 }
             }
@@ -44,7 +44,7 @@ struct TimelineStrip: View {
                         }
                         Button(action: onAdd) {
                             Label("Add", systemImage: "plus")
-                                .font(.bloom(.subheadline, weight: .semibold))
+                                .font(.bloom(.subheadline, weight: .bold))
                                 .foregroundStyle(Theme.blushDeep)
                                 .padding(.horizontal, 18)
                                 .frame(height: 58)
@@ -88,7 +88,7 @@ struct MilestoneChip: View {
             .frame(width: 24)
             VStack(alignment: .leading, spacing: 1) {
                 Text(milestone.title)
-                    .font(.bloom(.subheadline, weight: .semibold))
+                    .font(.bloom(.subheadline, weight: .bold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Text(subtitle)
@@ -99,7 +99,7 @@ struct MilestoneChip: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 58)
-        .background(Theme.surface, in: .rect(cornerRadius: 12, style: .continuous))
+        .background(isPast ? Theme.sageSoft : Theme.blushSoft, in: .rect(cornerRadius: 20, style: .continuous))
     }
 
     private var subtitle: String {
@@ -151,7 +151,7 @@ private struct TimelineAddMenu: View {
                 Label("Restore typical milestones", systemImage: "arrow.counterclockwise")
             }
         } label: {
-            Label("Add", systemImage: "plus")
+            Label("Add", systemImage: "plus.circle.fill")
         }
         .tint(Theme.blushDeep)
     }
@@ -182,7 +182,7 @@ struct TimelinePane: View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Your timeline")
-                    .font(.bloom(.title2, weight: .semibold))
+                    .font(.bloom(.title2, weight: .heavy))
                     .foregroundStyle(Theme.text)
                 Spacer()
                 TimelineAddMenu(editing: $editing)
@@ -213,18 +213,21 @@ struct TimelineList: View {
                         if month.number < 10 || !items.isEmpty {
                             Section {
                                 if month.number == currentMonth {
-                                    YouAreHereRow(headline: age.headline)
+                                    YouAreHereRow(headline: age.headline, emoji: WeekLibrary.week(age.contentWeek)?.emoji ?? "🌱")
+                                        .listRowBackground(Theme.sageSoft)
                                 }
                                 if items.isEmpty && month.number != currentMonth {
                                     Text("A quiet month. Add a moment?")
                                         .font(.bloom(.subheadline))
                                         .foregroundStyle(Theme.textSecondary)
+                                        .listRowBackground(Theme.surface)
                                 }
                                 ForEach(items) { milestone in
                                     Button { editing = MilestoneEditorItem(milestone: milestone) } label: {
                                         MilestoneRow(milestone: milestone, isPast: milestone.isPast(store.now))
                                     }
                                     .buttonStyle(.plain)
+                                    .listRowBackground(Theme.surface)
                                     .swipeActions {
                                         Button(role: .destructive) {
                                             pendingDelete = milestone
@@ -247,7 +250,7 @@ struct TimelineList: View {
                             .listRowBackground(Color.clear)
                     }
                 }
-                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
                 .onAppear {
                     proxy.scrollTo(currentMonth, anchor: .top)
                 }
@@ -283,16 +286,19 @@ private struct MonthHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(month.title)
-                .font(.bloom(.headline, weight: .semibold))
+                .font(.bloom(.title3, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text(month.weeksLabel)
-                .font(.bloom(.subheadline))
+                .font(.bloom(.subheadline, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
             Spacer()
             if month.number == 1 || month.number == 4 || month.number == 7 {
                 Text("Trimester \(month.trimester)")
-                    .font(.bloom(.caption, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+                    .font(.bloom(.caption, weight: .bold))
+                    .foregroundStyle(Theme.peachDeep)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.peachSoft, in: .capsule)
             }
         }
         .textCase(nil)
@@ -302,17 +308,15 @@ private struct MonthHeader: View {
 
 private struct YouAreHereRow: View {
     var headline: String
+    var emoji: String
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "location.fill")
-                .font(.body)
-                .foregroundStyle(Theme.blushDeep)
-                .frame(width: 24)
+            Text(emoji).font(.system(size: 30))
             VStack(alignment: .leading, spacing: 2) {
                 Text("You are here")
-                    .font(.bloom(.headline, weight: .semibold))
-                    .foregroundStyle(Theme.blushDeep)
+                    .font(.bloom(.headline, weight: .heavy))
+                    .foregroundStyle(Theme.sageDeep)
                 Text(headline)
                     .font(.bloom(.subheadline))
                     .foregroundStyle(Theme.text)
@@ -333,14 +337,14 @@ struct MilestoneRow: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 40, height: 40)
-                        .clipShape(.rect(cornerRadius: 8, style: .continuous))
+                        .frame(width: 52, height: 52)
+                        .clipShape(.rect(cornerRadius: 16, style: .continuous))
                 } else {
                     Image(systemName: milestone.isMarker ? "sparkles" : milestone.type.symbol)
-                        .font(.system(size: 17, weight: .regular))
-                        .foregroundStyle(isPast ? Theme.sageDeep : Theme.blushDeep)
-                        .frame(width: 40, height: 40)
-                        .background(isPast ? Theme.sageSoft : Theme.surfaceMuted, in: .rect(cornerRadius: 8, style: .continuous))
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(isPast ? Theme.sageDeep : milestone.type.tint)
+                        .frame(width: 52, height: 52)
+                        .background(isPast ? Theme.sageSoft : milestone.type.soft, in: .rect(cornerRadius: 16, style: .continuous))
                 }
                 if isPast {
                     Image(systemName: "checkmark.circle.fill")
@@ -352,25 +356,25 @@ struct MilestoneRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(milestone.title)
-                    .font(.bloom(.body, weight: .semibold))
+                    .font(.bloom(.headline, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Text(detail)
                     .font(.bloom(.subheadline))
                     .foregroundStyle(Theme.textSecondary)
                 if isPast {
                     Text(milestone.isMarker ? "Reached" : "Memory")
-                        .font(.bloom(.caption, weight: .medium))
+                        .font(.bloom(.caption, weight: .bold))
                         .foregroundStyle(Theme.sageDeep)
                 } else if milestone.isSuggested && !milestone.userEdited {
                     Text("Suggested")
-                        .font(.bloom(.caption, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.bloom(.caption, weight: .bold))
+                        .foregroundStyle(Theme.peachDeep)
                 }
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                .foregroundStyle(Theme.textSecondary.opacity(0.6))
         }
         .padding(.vertical, 4)
         .contentShape(.rect)

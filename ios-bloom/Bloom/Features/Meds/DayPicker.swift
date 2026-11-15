@@ -45,20 +45,20 @@ struct DayPicker: View {
         } label: {
             VStack(spacing: 6) {
                 Text(isToday ? "Today" : day.formatted(.dateTime.weekday(.abbreviated)))
-                    .font(.bloom(.caption2, weight: .medium))
-                    .foregroundStyle(isSelected ? .white : Theme.textSecondary)
+                    .font(.bloom(.caption2, weight: .bold))
+                    .foregroundStyle(isSelected ? .white.opacity(0.9) : Theme.textSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 ZStack {
                     ProgressRing(
                         progress: total == 0 ? 0 : Double(logged) / Double(total),
                         lineWidth: 4,
-                        tint: isSelected ? .white : Theme.sageDeep,
+                        tint: isSelected ? .white : Theme.sage,
                         track: isSelected ? .white.opacity(0.3) : Theme.ringTrack
                     )
                     .opacity(total == 0 || isFuture ? 0.35 : 1)
                     Text(day.formatted(.dateTime.day()))
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .heavy))
                         .foregroundStyle(isSelected ? .white : Theme.text)
                         .monospacedDigit()
                 }
@@ -67,8 +67,8 @@ struct DayPicker: View {
             .frame(width: 54)
             .padding(.vertical, 10)
             .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? Theme.blush : (isToday ? Theme.blushSoft : Theme.surface))
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(isSelected ? Theme.blush : (isToday ? Theme.blushSoft : Theme.surface.opacity(0.75)))
             }
         }
         .buttonStyle(PressableStyle())

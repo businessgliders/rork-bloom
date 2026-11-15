@@ -118,7 +118,7 @@ struct SettingsView: View {
                     NavigationLink("Privacy policy") { PrivacyPolicyView() }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Not medical advice")
-                            .font(.bloom(.headline, weight: .semibold))
+                            .font(.bloom(.headline, weight: .bold))
                         Text("Bloom shares general information only. Always follow your doctor, midwife or pharmacist. Your health data is never used for analytics or advertising.")
                             .font(.bloom(.subheadline))
                             .foregroundStyle(Theme.textSecondary)
@@ -245,15 +245,15 @@ struct SettingsView: View {
                 if !account.partnerJoined, let code = account.inviteCode {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Invite \(store.name(for: account.myRole.other))")
-                            .font(.bloom(.headline, weight: .semibold))
+                            .font(.bloom(.headline, weight: .bold))
                         HStack {
                             Text(code)
-                                .font(.system(size: 28, weight: .semibold))
+                                .font(.system(size: 28, weight: .heavy, design: .rounded))
                                 .tracking(6)
                                 .foregroundStyle(Theme.blushDeep)
                                 .textSelection(.enabled)
                             Spacer()
-                            ShareLink(item: "Join our pregnancy on Bloom. Open Bloom, tap \"Join with a code\" and enter \(code)") {
+                            ShareLink(item: "Join our pregnancy on Bloom 🌷 Open Bloom, tap \"Join with a code\" and enter \(code)") {
                                 Label("Share", systemImage: "square.and.arrow.up")
                             }
                             .buttonStyle(BloomSoftButtonStyle())
@@ -297,13 +297,10 @@ struct SettingsView: View {
                     showAccount = true
                 } label: {
                     HStack(spacing: 14) {
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(Theme.blushDeep)
-                            .frame(width: 32)
+                        Text("💞").font(.system(size: 28))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(sync.isSignedIn ? "Start together or join" : "Sync with your partner")
-                                .font(.bloom(.headline, weight: .semibold))
+                                .font(.bloom(.headline, weight: .bold))
                                 .foregroundStyle(Theme.text)
                             Text("Share milestones and meds, with Live Activities on both phones.")
                                 .font(.bloom(.subheadline))

@@ -101,7 +101,7 @@ struct MedsBoxView: View {
     private var inputStep: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("List all your medications")
-                .font(.bloom(.largeTitle, weight: .bold))
+                .font(.bloom(.largeTitle, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text("…and any rules about timing, food or each other. Bloom plans the times around \(isViewer ? "your" : "\(store.name(for: owner))'s") day.")
                 .font(.bloom(.subheadline))
@@ -114,7 +114,7 @@ struct MedsBoxView: View {
                 if text.isEmpty {
                     Text("e.g. \(example)")
                         .font(.bloom(.body))
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(Theme.textSecondary.opacity(0.8))
                         .padding(.top, 8)
                         .padding(.leading, 5)
                         .allowsHitTesting(false)
@@ -132,7 +132,7 @@ struct MedsBoxView: View {
                     Haptics.select()
                     text = example
                 }
-                .font(.bloom(.footnote, weight: .semibold))
+                .font(.bloom(.footnote, weight: .bold))
                 .tint(Theme.blushDeep)
             }
         }
@@ -181,7 +181,7 @@ struct MedsBoxView: View {
     private var consentStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Before Bloom reads it", systemImage: "hand.raised.fill")
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text("To read your list, Bloom sends only this text to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini. It only sorts it into medications and rules; the times are worked out on this iPhone.")
                 .font(.bloom(.subheadline))
@@ -196,7 +196,7 @@ struct MedsBoxView: View {
                     store.setAILookupConsent(true)
                     run()
                 }
-                .buttonStyle(BloomPrimaryButtonStyle(tint: Theme.blush))
+                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
                 .accessibilityIdentifier("ai-consent-allow")
                 Button("Not now") { go(.input) }
                     .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
@@ -211,7 +211,7 @@ struct MedsBoxView: View {
                 .controlSize(.large)
                 .tint(Theme.peachDeep)
             Text("Reading your list…")
-                .font(.bloom(.title2, weight: .semibold))
+                .font(.bloom(.title2, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text("Sorting it into medications and rules.")
                 .font(.bloom(.subheadline))
@@ -241,10 +241,10 @@ struct MedsBoxView: View {
         ForEach(questions) { q in
             VStack(alignment: .leading, spacing: 12) {
                 Label("One thing to check", systemImage: "questionmark.bubble.fill")
-                    .font(.bloom(.footnote, weight: .semibold))
+                    .font(.bloom(.footnote, weight: .heavy))
                     .foregroundStyle(Theme.peachDeep)
                 Text(q.question)
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
                 FlowLayout(spacing: 8) {
@@ -256,7 +256,7 @@ struct MedsBoxView: View {
                             run()
                         } label: {
                             Text(option.label)
-                                .font(.bloom(.subheadline, weight: .semibold))
+                                .font(.bloom(.subheadline, weight: .bold))
                                 .foregroundStyle(Theme.peachDeep)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 9)
@@ -274,7 +274,7 @@ struct MedsBoxView: View {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(med.shortName)
-                            .font(.bloom(.headline, weight: .semibold))
+                            .font(.bloom(.headline, weight: .heavy))
                             .foregroundStyle(Theme.text)
                         let detail = [med.friendlyName.isEmpty ? nil : med.name, med.dose.isEmpty ? nil : med.dose,
                                       med.fixedTime.map { "at \($0.date(on: .now).formatted(date: .omitted, time: .shortened))" }]
@@ -287,7 +287,7 @@ struct MedsBoxView: View {
                     }
                     Spacer()
                     Text(med.existingID == nil ? "New" : "Kept")
-                        .font(.bloom(.caption, weight: .semibold))
+                        .font(.bloom(.caption, weight: .heavy))
                         .foregroundStyle(med.existingID == nil ? Theme.blushDeep : Theme.sageDeep)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -299,7 +299,7 @@ struct MedsBoxView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 20))
-                            .foregroundStyle(Theme.textSecondary)
+                            .foregroundStyle(Theme.textSecondary.opacity(0.5))
                     }
                     .accessibilityLabel("Remove \(med.shortName)")
                 }
@@ -333,7 +333,7 @@ struct MedsBoxView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 20))
-                            .foregroundStyle(Theme.textSecondary)
+                            .foregroundStyle(Theme.textSecondary.opacity(0.5))
                     }
                     .accessibilityLabel("Remove rule")
                 }
@@ -385,7 +385,7 @@ struct MedsBoxView: View {
         let violations = template.map { store.violations(in: $0) } ?? self.violations
         VStack(alignment: .leading, spacing: 6) {
             Text(violations.isEmpty ? "All rules fit" : "Almost there")
-                .font(.bloom(.largeTitle, weight: .bold))
+                .font(.bloom(.largeTitle, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text(violations.isEmpty ? "Every dose is at the earliest time that keeps all your rules." : "Some rules can't all fit in this routine. Here's which, with fixes that keep every rule.")
                 .font(.bloom(.subheadline))
@@ -404,7 +404,7 @@ struct MedsBoxView: View {
                 ForEach(template.doses.sorted { $0.time < $1.time }) { dose in
                     HStack {
                         Text(dose.time.date(on: .now).formatted(date: .omitted, time: .shortened))
-                            .font(.bloom(.subheadline, weight: .semibold))
+                            .font(.bloom(.subheadline, weight: .bold))
                             .monospacedDigit()
                             .foregroundStyle(Theme.textSecondary)
                             .frame(width: 76, alignment: .leading)
@@ -436,7 +436,7 @@ struct MedsBoxView: View {
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title.uppercased())
-                .font(.bloom(.caption, weight: .semibold))
+                .font(.bloom(.caption, weight: .heavy))
                 .foregroundStyle(Theme.textSecondary)
                 .tracking(0.6)
             content()

@@ -75,27 +75,28 @@ struct MedsView: View {
                 }
             }
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     NavigationLink(value: MedsRoute.manage) {
                         Label("Medications", systemImage: "list.bullet")
                     }
-                    .tint(Theme.blushDeep)
+                    .tint(Theme.textSecondary)
                     .disabled(store.medications.isEmpty)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink(value: MedsRoute.schedule(owner)) {
                         Label("Routines", systemImage: "calendar.day.timeline.left")
                     }
-                    .tint(Theme.blushDeep)
+                    .tint(Theme.textSecondary)
                     .accessibilityIdentifier("meds-schedule")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         startAdd()
                     } label: {
-                        Label("Add", systemImage: "plus")
+                        Label("Add", systemImage: "plus.circle.fill")
                     }
                     .tint(Theme.blushDeep)
                     .accessibilityIdentifier("meds-add")
@@ -140,18 +141,15 @@ struct MedsView: View {
             .inspectorColumnWidth(min: 340, ideal: 380, max: 440)
             .presentationDragIndicator(.visible)
         }
+        .fullScreenCover(item: $store.celebration) { celebration in
+            SlotCompleteView(celebration: celebration, headline: celebrationHeadline(celebration),
+                             subtitle: celebrationSubtitle(celebration)) {
+                store.celebration = nil
+            }
+        }
         .overlay(alignment: .bottom) {
-            // A finished part of the day shows a short inline line first, then the undo toast.
-            if let celebration = store.celebration {
-                CompletionBanner(headline: celebrationHeadline(celebration),
-                                 subtitle: celebrationSubtitle(celebration)) {
-                    if store.celebration?.id == celebration.id { store.celebration = nil }
-                }
-                .id(celebration.id)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if let toast = store.undoToast {
+            // Hold the toast (and its timer) until the celebration screen is closed.
+            if let toast = store.undoToast, store.celebration == nil {
                 UndoToastView(toast: toast) {
                     store.undo(medicationID: toast.medicationID, scheduledAt: toast.scheduledAt)
                 } onExpire: {
@@ -164,7 +162,6 @@ struct MedsView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.undoToast?.id)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.celebration?.id)
         .onChange(of: today) { oldValue, newValue in
             // Follow the calendar across midnight when the user was looking at "today".
             if cal.isDate(selectedDay, inSameDayAs: oldValue) { selectedDay = newValue }
@@ -316,11 +313,11 @@ struct MedsView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "sun.horizon")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(Theme.blushDeep)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Plan around your day")
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .heavy))
                         .foregroundStyle(Theme.text)
                     Text("Tell Bloom when you wake, eat and sleep, then list your medications and rules.")
                         .font(.bloom(.footnote))
@@ -329,11 +326,11 @@ struct MedsView: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Theme.textSecondary)
             }
             .padding(16)
-            .background(Theme.surface, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
+            .background(Theme.blushSoft, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
         }
         .buttonStyle(PressableStyle())
         .accessibilityIdentifier("meds-plan-routine")
@@ -386,7 +383,7 @@ struct MedsView: View {
                         .font(.system(size: 44, weight: .semibold))
                         .foregroundStyle(Theme.blushDeep)
                     Text(store.hasRoutine(owner) ? "List your medications" : "Set up your routine")
-                        .font(.bloom(.title, weight: .bold))
+                        .font(.bloom(.title, weight: .heavy))
                         .foregroundStyle(Theme.text)
                         .multilineTextAlignment(.center)
                     Text(store.hasRoutine(owner)
@@ -422,9 +419,11 @@ struct MedsView: View {
     private func celebrationHeadline(_ celebration: SlotCelebration) -> String {
         let taker = celebration.taker
         if store.isShared, taker != store.viewerRole {
-            return "\(store.name(for: taker))'s \(celebration.slot.title.lowercased()) doses are done"
+            return "\(store.name(for: taker))'s \(celebration.slot.title.lowercased()) is done!"
         }
-        return "\(celebration.slot.title) doses done"
+        // Mom-specific wording only for the mom.
+        if taker == .mom { return "You're glowing, \(store.name(for: .mom))!" }
+        return "Nicely done, \(store.name(for: .partner))!"
     }
 
     private func celebrationSubtitle(_ celebration: SlotCelebration) -> String {
@@ -432,8 +431,7 @@ struct MedsView: View {
         if store.isShared, celebration.taker != store.viewerRole {
             return "\(percent)% of \(store.name(for: celebration.taker))'s doses logged today"
         }
-        let streak = celebration.streak > 0 ? " · \(celebration.streak)-day streak" : ""
-        return "\(percent)% of today's doses logged" + streak
+        return "\(percent)% of today's doses logged"
     }
 
     private func openEditor(_ medication: Medication?) {
@@ -441,49 +439,6 @@ struct MedsView: View {
         editingMedication = medication
         editorToken = UUID()
         showEditor = true
-    }
-}
-
-// MARK: - Completion line
-
-/// A quiet inline confirmation when a part of the day is finished:
-/// an animated checkmark, a light haptic and one short line.
-private struct CompletionBanner: View {
-    var headline: String
-    var subtitle: String
-    var onExpire: () -> Void
-    @State private var checked = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: checked ? "checkmark.circle.fill" : "circle")
-                .font(.title2)
-                .foregroundStyle(Theme.sageDeep)
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: checked)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(headline)
-                    .font(.bloom(.subheadline, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                Text(subtitle)
-                    .font(.bloom(.footnote))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.regularMaterial, in: .rect(cornerRadius: 14, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-        .frame(maxWidth: 520)
-        .accessibilityElement(children: .combine)
-        .task {
-            try? await Task.sleep(for: .milliseconds(150))
-            checked = true
-            Haptics.celebrate()
-            try? await Task.sleep(for: .seconds(3.5))
-            onExpire()
-        }
     }
 }
 
@@ -497,20 +452,20 @@ private struct UndoToastView: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: toast.isSkip ? "minus.circle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(toast.isSkip ? Color(uiColor: .secondaryLabel) : Theme.sageDeep)
+                .foregroundStyle(toast.isSkip ? Theme.surfaceMuted : Theme.sage)
             Text(toast.message)
-                .font(.bloom(.subheadline, weight: .medium))
-                .foregroundStyle(Theme.text)
+                .font(.bloom(.subheadline, weight: .semibold))
+                .foregroundStyle(Theme.canvas)
                 .lineLimit(2)
             Spacer(minLength: 4)
             Button("Undo", action: onUndo)
-                .font(.bloom(.subheadline, weight: .semibold))
-                .foregroundStyle(Theme.blushDeep)
+                .font(.bloom(.subheadline, weight: .heavy))
+                .foregroundStyle(Theme.blush)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(.regularMaterial, in: .rect(cornerRadius: 14, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .background(Theme.text, in: .capsule)
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
         .frame(maxWidth: 520)
         .task {
             try? await Task.sleep(for: .seconds(8))

@@ -55,7 +55,7 @@ struct CameraCaptureView: View {
                         onCancel()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 44, height: 44)
                             .background(.ultraThinMaterial, in: .circle)
@@ -67,7 +67,7 @@ struct CameraCaptureView: View {
 
                 VStack(spacing: 4) {
                     Text(purpose.title)
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .heavy))
                     Text(purpose.hint)
                         .font(.bloom(.footnote))
                         .multilineTextAlignment(.center)
@@ -121,16 +121,16 @@ struct CameraCaptureView: View {
         VStack(spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(Theme.blushDeep)
+                .foregroundStyle(Theme.blush)
             Text(title)
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .heavy))
             Text(body)
                 .font(.bloom(.subheadline))
                 .multilineTextAlignment(.center)
                 .opacity(0.8)
             if let action {
                 Button(action.0, action: action.1)
-                    .buttonStyle(BloomPrimaryButtonStyle(tint: Theme.blush))
+                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
                     .frame(maxWidth: 240)
             }
         }

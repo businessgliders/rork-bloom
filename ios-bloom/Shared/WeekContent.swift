@@ -36,11 +36,6 @@ nonisolated struct WeekContent: Codable, Identifiable {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Plain-text comparison, e.g. "About the size of a coconut".
-    var sizeLabel: String {
-        week <= 2 ? "Not here yet: \(size)" : "About the size of \(size)"
-    }
-
     var sizeSentence: String {
         week <= 2 ? "Not here yet: \(size)" : "about the size of \(size)"
     }

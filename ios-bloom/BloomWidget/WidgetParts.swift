@@ -1,25 +1,40 @@
 import SwiftUI
 import WidgetKit
 
-/// Plain system surface behind every widget.
+/// Cream canvas with a soft peach and blush glow, Bloom's widget atmosphere.
 struct WidgetCanvas: View {
+    var glow: Color = Theme.peachSoft
+
     var body: some View {
-        Theme.surface
+        ZStack {
+            Theme.canvas
+            GeometryReader { proxy in
+                Circle()
+                    .fill(glow)
+                    .frame(width: proxy.size.width * 0.9)
+                    .position(x: proxy.size.width * 1.0, y: -proxy.size.height * 0.05)
+                Circle()
+                    .fill(Theme.blushSoft.opacity(0.7))
+                    .frame(width: proxy.size.width * 0.55)
+                    .position(x: -proxy.size.width * 0.05, y: proxy.size.height * 1.05)
+            }
+        }
     }
 }
 
-/// A solid status circle with a white SF Symbol (pill, hourglass, checkmark).
-struct StatusIcon: View {
-    var symbol: String
+/// A medication or baby-size emoji on a soft organic blob.
+struct EmojiBlob: View {
+    var emoji: String
     var size: CGFloat
-    var tint: Color = Theme.blush
+    var fill: Color = Theme.peachSoft
+    var seed: Int = 3
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(tint, in: .circle)
+        ZStack {
+            BlobShape(seed: seed).fill(fill)
+            Text(emoji).font(.system(size: size * 0.52))
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -30,8 +45,8 @@ struct WidgetCaption: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .semibold))
-            .tracking(0.4)
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .tracking(0.6)
             .foregroundStyle(color)
             .lineLimit(1)
     }
@@ -46,10 +61,10 @@ struct WidgetChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .semibold)) }
+            if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .bold)) }
             Text(text).lineLimit(1)
         }
-        .font(.system(size: 12, weight: .semibold))
+        .font(.system(size: 12, weight: .bold, design: .rounded))
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

@@ -23,8 +23,8 @@ struct RightNowCard: View {
                     } else if state.allDone {
                         allDoneView
                     } else {
-                        Text("Nothing planned today.")
-                            .font(.bloom(.headline, weight: .semibold))
+                        Text("Nothing planned today. Enjoy your day!")
+                            .font(.bloom(.headline, weight: .bold))
                             .foregroundStyle(Theme.text)
                     }
                     progressFooter(state)
@@ -33,6 +33,7 @@ struct RightNowCard: View {
             }
             .background(Theme.surface, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
             .clipShape(.rect(cornerRadius: Theme.cardRadius, style: .continuous))
+            .shadow(color: Color(light: 0xC9A893, dark: 0x000000).opacity(0.14), radius: 18, y: 8)
             .animation(.spring(response: 0.5, dampingFraction: 0.85), value: state.due.map(\.id))
             .animation(.spring(response: 0.5, dampingFraction: 0.85), value: foodKey(state.food))
         }
@@ -40,14 +41,12 @@ struct RightNowCard: View {
 
     private var allDoneView: some View {
         HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 30))
-                .foregroundStyle(Theme.sageDeep)
+            Text("🌸").font(.system(size: 34))
             VStack(alignment: .leading, spacing: 2) {
                 Text("All done for today")
-                    .font(.bloom(.title3, weight: .semibold))
+                    .font(.bloom(.title3, weight: .heavy))
                     .foregroundStyle(Theme.text)
-                Text("Every dose is logged.")
+                Text("Every dose is logged. Lovely work.")
                     .font(.bloom(.subheadline))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -60,13 +59,13 @@ struct RightNowCard: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.ringTrack)
                     Capsule()
-                        .fill(Theme.sageDeep)
+                        .fill(Theme.sage)
                         .frame(width: state.totalToday == 0 ? 0 : proxy.size.width * CGFloat(state.resolvedToday) / CGFloat(state.totalToday))
                 }
             }
-            .frame(height: 6)
+            .frame(height: 8)
             Text("\(state.resolvedToday) of \(state.totalToday) logged")
-                .font(.bloom(.footnote))
+                .font(.bloom(.footnote, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
                 .monospacedDigit()
                 .fixedSize()
@@ -99,13 +98,13 @@ private struct FoodStatusBand: View {
                     icon("hourglass", tint: Theme.coral)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Eating now delays \(instance.medication.shortName) to \(delaysTo.formatted(date: .omitted, time: .shortened))")
-                            .font(.bloom(.title3, weight: .semibold))
+                            .font(.bloom(.title3, weight: .heavy))
                             .foregroundStyle(Theme.coralDeep)
                             .fixedSize(horizontal: false, vertical: true)
                             .contentTransition(.numericText())
                         Text("It needs \(Medication.durationText(instance.medication.noFoodBeforeMinutes)) without food first.")
                             .font(.bloom(.subheadline, weight: .semibold))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(Theme.text.opacity(0.75))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
@@ -114,7 +113,7 @@ private struct FoodStatusBand: View {
                     onTaken(instance, .now)
                 } label: {
                     Label("Haven't eaten since \(emptySince.formatted(date: .omitted, time: .shortened))? Take it now", systemImage: "checkmark")
-                        .font(.bloom(.subheadline, weight: .semibold))
+                        .font(.bloom(.subheadline, weight: .bold))
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -134,12 +133,12 @@ private struct FoodStatusBand: View {
                     icon("hand.raised.fill", tint: Theme.coral)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("No food until \(window.end.formatted(date: .omitted, time: .shortened))")
-                            .font(.bloom(.title3, weight: .semibold))
+                            .font(.bloom(.title2, weight: .heavy))
                             .foregroundStyle(Theme.coralDeep)
                             .contentTransition(.numericText())
                         Text("\(remainingText(window.end.timeIntervalSince(now))) left · for \(window.reasons.joined(separator: " & "))")
                             .font(.bloom(.subheadline, weight: .semibold))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(Theme.text.opacity(0.75))
                             .monospacedDigit()
                         if !window.isConfirmed {
                             Text("Planned pause · starts counting when \(PersonWording.takes(person)) it")
@@ -151,13 +150,13 @@ private struct FoodStatusBand: View {
                 }
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.ringTrack)
+                        Capsule().fill(Theme.surface.opacity(0.7))
                         Capsule()
                             .fill(Theme.coral)
                             .frame(width: proxy.size.width * CGFloat(min(max(elapsed / max(total, 1), 0), 1)))
                     }
                 }
-                .frame(height: 6)
+                .frame(height: 10)
                 .accessibilityHidden(true)
             }
             .padding(20)
@@ -170,17 +169,17 @@ private struct FoodStatusBand: View {
                 icon("fork.knife", tint: Theme.sage)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Food OK")
-                        .font(.bloom(.title3, weight: .semibold))
+                        .font(.bloom(.title2, weight: .heavy))
                         .foregroundStyle(Theme.sageDeep)
                     if let next {
                         Text("Next snack pause at \(next.start.formatted(date: .omitted, time: .shortened)) · in \(remainingText(next.start.timeIntervalSince(now)))")
                             .font(.bloom(.subheadline, weight: .semibold))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(Theme.text.opacity(0.75))
                             .monospacedDigit()
                     } else {
                         Text("No food pauses left today")
                             .font(.bloom(.subheadline, weight: .semibold))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(Theme.text.opacity(0.75))
                     }
                 }
                 Spacer(minLength: 0)
@@ -194,9 +193,9 @@ private struct FoodStatusBand: View {
 
     private func icon(_ symbol: String, tint: Color) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 20, weight: .bold))
             .foregroundStyle(.white)
-            .frame(width: 36, height: 36)
+            .frame(width: 46, height: 46)
             .background(tint, in: .circle)
     }
 }
@@ -236,10 +235,10 @@ private struct DueDoseView: View {
         let med = instance.medication
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 14) {
-                MedBadge(medication: med, size: 44)
+                MedBadge(medication: med, size: 56)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Time for \(med.shortName)")
-                        .font(.bloom(.title3, weight: .semibold))
+                        .font(.bloom(.title3, weight: .heavy))
                         .foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(subtitle)
@@ -388,10 +387,10 @@ private struct NextDoseView: View {
     var body: some View {
         let med = instance.medication
         HStack(spacing: 14) {
-            MedBadge(medication: med, size: 44, fill: Theme.surfaceMuted)
+            MedBadge(medication: med, size: 50, fill: Theme.peachSoft)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Next: \(med.reasonLabel)")
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
                 Text("\(instance.scheduledAt.formatted(date: .omitted, time: .shortened)) · in \(remainingText(instance.scheduledAt.timeIntervalSince(now)))")
                     .font(.bloom(.subheadline, weight: .semibold))
@@ -420,16 +419,14 @@ struct DaySummaryCard: View {
         let taken = instances.filter(\.isTaken).count
         HStack(spacing: 18) {
             ZStack {
-                ProgressRing(progress: instances.isEmpty ? 0 : Double(resolved) / Double(instances.count), lineWidth: 6)
-                Text(instances.isEmpty ? "–" : "\(resolved)/\(instances.count)")
-                    .font(.bloom(.subheadline, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.text)
+                ProgressRing(progress: instances.isEmpty ? 0 : Double(resolved) / Double(instances.count), lineWidth: 10)
+                Text(isFuture ? "🗓️" : (resolved == instances.count && !instances.isEmpty ? "🌸" : "🌱"))
+                    .font(.system(size: 26))
             }
-            .frame(width: 60, height: 60)
+            .frame(width: 78, height: 78)
             VStack(alignment: .leading, spacing: 4) {
                 Text(day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-                    .font(.bloom(.title3, weight: .semibold))
+                    .font(.bloom(.title3, weight: .heavy))
                     .foregroundStyle(Theme.text)
                 if instances.isEmpty {
                     Text("No doses planned")

@@ -168,7 +168,7 @@ struct AddMedicationView: View {
     private var nameSection: some View {
         Section {
             TextField("Name, e.g. Levothyroxine", text: $name)
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .bold))
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
                 .submitLabel(.done)
@@ -206,13 +206,33 @@ struct AddMedicationView: View {
             }
             .disabled(isManaged)
 
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Medication.emojiChoices, id: \.self) { choice in
+                        Button {
+                            Haptics.select()
+                            emoji = choice
+                        } label: {
+                            Text(choice)
+                                .font(.system(size: 24))
+                                .frame(width: 44, height: 44)
+                                .background(emoji == choice ? Theme.blushSoft : Theme.surfaceMuted, in: .circle)
+                                .overlay(Circle().stroke(emoji == choice ? Theme.blush : .clear, lineWidth: 2))
+                        }
+                        .buttonStyle(PressableStyle())
+                        .accessibilityLabel("Icon \(choice)")
+                        .accessibilityAddTraits(emoji == choice ? .isSelected : [])
+                    }
+                }
+                .padding(.vertical, 4)
+            }
 
             Button {
                 startLookup()
             } label: {
                 HStack {
                     Label("Suggest timing", systemImage: "sparkles")
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .bold))
                     Spacer()
                     if lookupState == .loading { ProgressView() }
                 }
@@ -257,7 +277,7 @@ struct AddMedicationView: View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Before we look it up", systemImage: "hand.raised.fill")
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
                 Text("To suggest timing, Bloom sends only the medication name you typed (\"\(trimmedName)\") to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini. Nothing else (no names, dates or doses) is sent, and nothing is saved unless you confirm it.")
                     .font(.bloom(.subheadline))
@@ -272,7 +292,7 @@ struct AddMedicationView: View {
                         showConsent = false
                         runLookup()
                     }
-                    .buttonStyle(BloomPrimaryButtonStyle(tint: Theme.blush))
+                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
                     Button("Not now") {
                         store.setAILookupConsent(false)
                         showConsent = false
@@ -300,11 +320,11 @@ struct AddMedicationView: View {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Suggested. Confirm with your doctor or pharmacist.", systemImage: "sparkles")
-                        .font(.bloom(.subheadline, weight: .semibold))
+                        .font(.bloom(.subheadline, weight: .heavy))
                         .foregroundStyle(Theme.peachDeep)
                     if suggestion.recognized {
                         Text(suggestion.kind.isEmpty ? suggestion.displayName : "\(suggestion.displayName) · \(suggestion.kind)")
-                            .font(.bloom(.headline, weight: .semibold))
+                            .font(.bloom(.headline, weight: .bold))
                             .foregroundStyle(Theme.text)
                         suggestionLine("fork.knife", suggestionFoodText(suggestion))
                         if let slot = suggestion.preferredSlot {
@@ -314,7 +334,7 @@ struct AddMedicationView: View {
                             suggestionLine("lightbulb", suggestion.tip)
                         }
                         Button("Use these suggestions") { apply(suggestion) }
-                            .buttonStyle(BloomPrimaryButtonStyle())
+                            .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.peach))
                             .padding(.top, 4)
                     } else {
                         Text("We couldn't find general information for this name. Please fill it in from your prescription label.")
@@ -379,7 +399,7 @@ struct AddMedicationView: View {
                             if on { weekdays.remove(day) } else { weekdays.insert(day) }
                         } label: {
                             Text(PregnancyMath.calendar.veryShortWeekdaySymbols[day - 1])
-                                .font(.bloom(.subheadline, weight: .semibold))
+                                .font(.bloom(.subheadline, weight: .bold))
                                 .foregroundStyle(on ? .white : Theme.textSecondary)
                                 .frame(maxWidth: .infinity, minHeight: 38)
                                 .background(on ? Theme.blush : Theme.surfaceMuted, in: .circle)

@@ -79,7 +79,7 @@ struct OnboardingView: View {
                 go(to: Step(rawValue: step.rawValue - 1) ?? .welcome, forward: false)
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(Theme.text)
                     .frame(width: 44, height: 44)
                     .background(Theme.surface, in: .circle)
@@ -175,14 +175,17 @@ struct OnboardingStepLayout<Content: View>: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     if let emoji {
-                        Image(systemName: emoji)
-                            .font(.system(size: 40, weight: .regular))
-                            .foregroundStyle(Theme.blushDeep)
-                            .accessibilityHidden(true)
+                        ZStack {
+                            BlobShape(seed: title.count)
+                                .fill(Theme.peachSoft)
+                                .frame(width: 92, height: 88)
+                            Text(emoji).font(.system(size: 46))
+                        }
+                        .accessibilityHidden(true)
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Text(title)
-                            .font(.bloom(.largeTitle, weight: .bold))
+                            .font(.bloom(.largeTitle, weight: .heavy))
                             .foregroundStyle(Theme.text)
                             .fixedSize(horizontal: false, vertical: true)
                         if let subtitle {
@@ -221,21 +224,24 @@ private struct WelcomeStep: View {
         VStack(spacing: 0) {
             CenteredScroll {
                 VStack(spacing: 28) {
-                    Image(systemName: "camera.macro")
-                        .font(.system(size: 56, weight: .regular))
-                        .foregroundStyle(.white)
-                        .frame(width: 112, height: 112)
-                        .background(Theme.blush, in: .rect(cornerRadius: 26, style: .continuous))
-                        .scaleEffect(appeared ? 1 : 0.92)
-                        .opacity(appeared ? 1 : 0)
-                        .accessibilityHidden(true)
+                    ZStack {
+                        BlobShape(seed: 11)
+                            .fill(Theme.blushSoft)
+                            .frame(width: 280, height: 260)
+                        FlowerIllustration(fill: appeared ? 1 : 0)
+                            .frame(width: 190, height: 220)
+                    }
+                    .fittedSquare(280)
+                    .frame(maxWidth: 280)
+                    .scaleEffect(appeared ? 1 : 0.85)
+                    .accessibilityHidden(true)
 
                     VStack(spacing: 12) {
                         Text("Welcome to Bloom")
-                            .font(.bloom(.largeTitle, weight: .bold))
+                            .font(.bloom(.largeTitle, weight: .heavy))
                             .foregroundStyle(Theme.text)
                             .multilineTextAlignment(.center)
-                        Text("Follow your pregnancy week by week and keep your daily medication routine on track, together.")
+                        Text("A cosy companion for the two of you: watch your little one grow and keep everyday care easy.")
                             .font(.bloom(.title3))
                             .foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.center)
@@ -252,13 +258,13 @@ private struct WelcomeStep: View {
                 Haptics.tap()
                 account()
             }
-            .font(.bloom(.headline, weight: .semibold))
+            .font(.bloom(.headline, weight: .bold))
             .foregroundStyle(Theme.blushDeep)
             .padding(.vertical, 14)
             .padding(.bottom, 2)
         }
         .onAppear {
-            withAnimation(.easeOut(duration: 0.5).delay(0.1)) { appeared = true }
+            withAnimation(.spring(response: 1.2, dampingFraction: 0.7).delay(0.2)) { appeared = true }
         }
     }
 }
@@ -274,7 +280,7 @@ private struct NamesStep: View {
 
     var body: some View {
         OnboardingStepLayout(
-            emoji: "hand.wave",
+            emoji: "👋",
             title: "Who's on this journey?",
             subtitle: "We'll use your names to cheer you both on.",
             buttonTitle: "Continue",
@@ -329,7 +335,7 @@ private struct MethodStep: View {
 
     var body: some View {
         OnboardingStepLayout(
-            emoji: "calendar",
+            emoji: "🗓️",
             title: "How should we date your pregnancy?",
             subtitle: "Pick what you know best. You can change it later.",
             buttonTitle: "Next",
@@ -344,15 +350,15 @@ private struct MethodStep: View {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: method == option ? "checkmark.circle.fill" : "circle")
                                 .font(.system(size: 24))
-                                .foregroundStyle(method == option ? Theme.blushDeep : Theme.textSecondary)
+                                .foregroundStyle(method == option ? Theme.blushDeep : Theme.textSecondary.opacity(0.6))
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
                                     Text(option.title)
-                                        .font(.bloom(.headline, weight: .semibold))
+                                        .font(.bloom(.headline, weight: .bold))
                                         .foregroundStyle(Theme.text)
                                     if option == .ovulation {
                                         Text("Default")
-                                            .font(.bloom(.caption2, weight: .semibold))
+                                            .font(.bloom(.caption2, weight: .bold))
                                             .foregroundStyle(Theme.sageDeep)
                                             .padding(.horizontal, 7)
                                             .padding(.vertical, 2)
@@ -390,7 +396,7 @@ private struct DateStep: View {
 
     var body: some View {
         OnboardingStepLayout(
-            emoji: draft.datingMethod == .dueDate ? "calendar.badge.checkmark" : "calendar",
+            emoji: draft.datingMethod == .dueDate ? "🍼" : "📅",
             title: draft.datingMethod.datePrompt,
             subtitle: nil,
             buttonTitle: "Calculate",
@@ -431,7 +437,7 @@ private struct DateStep: View {
                         .background(Theme.sageSoft, in: .circle)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Due \(draft.dueDate.formatted(.dateTime.month(.wide).day().year()))")
-                            .font(.bloom(.headline, weight: .semibold))
+                            .font(.bloom(.headline, weight: .bold))
                             .foregroundStyle(Theme.text)
                         Text("Today: \(age.headline)")
                             .font(.bloom(.subheadline))
@@ -452,6 +458,7 @@ private struct RevealStep: View {
     var profile: PregnancyProfile
     var next: () -> Void
     @State private var ringProgress: Double = 0
+    @State private var confetti = 0
 
     var body: some View {
         let age = profile.progress()
@@ -460,36 +467,28 @@ private struct RevealStep: View {
             VStack(spacing: 0) {
                 CenteredScroll {
                     VStack(spacing: 24) {
-                        Text("Hello, \(profile.babyName)")
-                            .font(.bloom(.largeTitle, weight: .bold))
+                        Text("Hello, \(profile.babyName)!")
+                            .font(.bloom(.title2, weight: .bold))
+                            .foregroundStyle(Theme.textSecondary)
+                        Text(age.headline)
+                            .font(.bloom(.largeTitle, weight: .heavy))
                             .foregroundStyle(Theme.text)
                             .multilineTextAlignment(.center)
 
                         ZStack {
-                            ProgressRing(progress: ringProgress, lineWidth: 14)
-                            VStack(spacing: 0) {
-                                Text("\(age.weeks)")
-                                    .font(.system(size: 64, weight: .semibold))
-                                    .monospacedDigit()
-                                    .foregroundStyle(Theme.text)
-                                Text(age.weeks == 1 ? "week" : "weeks")
-                                    .font(.bloom(.subheadline))
-                                    .foregroundStyle(Theme.textSecondary)
-                            }
+                            ProgressRing(progress: ringProgress, lineWidth: 16)
+                            BlobShape(seed: 4)
+                                .fill(Theme.peachSoft)
+                                .padding(44)
+                            Text(week?.emoji ?? "🌱")
+                                .font(.system(size: 84))
                         }
-                        .fittedSquare(220)
+                        .fittedSquare(250)
                         .padding(.horizontal, 24)
-
-                        if let week {
-                            Text(week.sizeLabel)
-                                .font(.bloom(.body))
-                                .foregroundStyle(Theme.text)
-                                .multilineTextAlignment(.center)
-                        }
 
                         VStack(spacing: 6) {
                             Text("Due \(profile.dueDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))")
-                                .font(.bloom(.title3, weight: .semibold))
+                                .font(.bloom(.title3, weight: .bold))
                                 .foregroundStyle(Theme.text)
                                 .multilineTextAlignment(.center)
                             Text("\(age.trimesterTitle) · \(age.daysToGoText)")
@@ -505,12 +504,14 @@ private struct RevealStep: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 12)
             }
+            ConfettiView(trigger: confetti)
         }
         .onAppear {
             withAnimation(.spring(response: 1.4, dampingFraction: 0.9).delay(0.2)) {
                 ringProgress = age.ringProgress
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                confetti += 1
                 Haptics.celebrate()
             }
         }
@@ -525,7 +526,7 @@ private struct NoticeStep: View {
 
     var body: some View {
         OnboardingStepLayout(
-            emoji: "text.page",
+            emoji: "💌",
             title: "A gentle note",
             subtitle: nil,
             buttonTitle: "I understand",
@@ -572,7 +573,7 @@ private struct NoticeRow: View {
                 .background(fill, in: .circle)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Text(text)
                     .font(.bloom(.subheadline))
@@ -595,10 +596,10 @@ private struct PermissionsStep: View {
 
     var body: some View {
         OnboardingStepLayout(
-            emoji: "bell",
+            emoji: "🔔",
             title: "Little nudges, when you want them",
             subtitle: "Totally optional. You can change these any time in Settings.",
-            buttonTitle: "Get started",
+            buttonTitle: "Let's bloom",
             action: finish
         ) {
             VStack(spacing: 14) {
@@ -655,7 +656,7 @@ private struct PermissionCard: View {
                     .background(fill, in: .circle)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .bold))
                         .foregroundStyle(Theme.text)
                     Text(text)
                         .font(.bloom(.subheadline))
@@ -666,7 +667,7 @@ private struct PermissionCard: View {
             switch granted {
             case .some(true):
                 Label("All set", systemImage: "checkmark.circle.fill")
-                    .font(.bloom(.subheadline, weight: .semibold))
+                    .font(.bloom(.subheadline, weight: .bold))
                     .foregroundStyle(Theme.sageDeep)
             case .some(false):
                 Text("No worries. You can turn this on later in the Settings app.")
@@ -674,7 +675,7 @@ private struct PermissionCard: View {
                     .foregroundStyle(Theme.textSecondary)
             case .none:
                 Button("Allow", action: request)
-                    .buttonStyle(BloomSoftButtonStyle())
+                    .buttonStyle(BloomSoftButtonStyle(tint: tint, fill: fill))
             }
         }
         .bloomCard(padding: 18)

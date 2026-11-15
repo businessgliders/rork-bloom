@@ -42,7 +42,7 @@ struct ManageMedsView: View {
     private func group(title: String, meds: [Medication], faded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .heavy))
                 .foregroundStyle(Theme.text)
             ForEach(meds) { med in
                 Button { onEdit(med) } label: { row(med, faded: faded) }
@@ -64,19 +64,19 @@ struct ManageMedsView: View {
             MedBadge(medication: med, size: 52, fill: faded ? Theme.surfaceMuted : Theme.blushSoft)
             VStack(alignment: .leading, spacing: 3) {
                 Text(med.displayTitle)
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
                     .multilineTextAlignment(.leading)
                 Text(timesLine(med))
                     .font(.bloom(.subheadline))
                     .foregroundStyle(Theme.textSecondary)
                 Text(faded ? "Stopped \(med.endDate?.formatted(date: .abbreviated, time: .omitted) ?? "")" : med.foodSummary)
-                    .font(.bloom(.footnote, weight: .semibold))
+                    .font(.bloom(.footnote, weight: .bold))
                     .foregroundStyle(med.foodRule == .emptyStomach && !faded ? Theme.coralDeep : Theme.textSecondary)
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Theme.textSecondary)
         }
         .bloomCard(padding: 16)

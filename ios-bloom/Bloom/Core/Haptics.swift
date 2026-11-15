@@ -17,8 +17,15 @@ enum Haptics {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
-    /// A single light tap for finishing something.
+    /// A short, joyful burst used with confetti.
     static func celebrate() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let heavy = UIImpactFeedbackGenerator(style: .medium)
+        heavy.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
     }
 }

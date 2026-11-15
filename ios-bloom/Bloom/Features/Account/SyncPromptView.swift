@@ -14,20 +14,21 @@ struct SyncPromptView: View {
             BloomBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-Image(systemName: "person.2.fill")
-                        .font(.system(size: 40, weight: .regular))
-                        .foregroundStyle(Theme.blushDeep)
-                    .scaleEffect(appeared ? 1 : 0.92)
+                    ZStack {
+                        BlobShape(seed: 7).fill(Theme.blushSoft).frame(width: 110, height: 102)
+                        Text("💞").font(.system(size: 52))
+                    }
+                    .scaleEffect(appeared ? 1 : 0.6)
                     .opacity(appeared ? 1 : 0)
                     .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("New: Bloom together")
-                            .font(.bloom(.caption, weight: .semibold))
+                            .font(.bloom(.caption, weight: .bold))
                             .textCase(.uppercase)
                             .foregroundStyle(Theme.blushDeep)
                         Text("Sync with your partner")
-                            .font(.bloom(.largeTitle, weight: .bold))
+                            .font(.bloom(.largeTitle, weight: .heavy))
                             .foregroundStyle(Theme.text)
                         Text("Sign in to share this pregnancy between your phones. Everything you've added so far comes with you.")
                             .font(.bloom(.title3))
@@ -36,8 +37,8 @@ Image(systemName: "person.2.fill")
                     }
 
                     VStack(spacing: 12) {
-                        perk("calendar", "Milestones and photos", "Both of you see every moment as it's added.")
-                        perk("pills.fill", "Meds and doses", "Log a dose on one phone and it shows on the other right away.")
+                        perk("🌷", "Milestones and photos", "Both of you see every moment as it's added.")
+                        perk("💊", "Meds and doses", "Log a dose on one phone and it shows on the other right away.")
                         perk("⏱️", "Live Activities on both phones", "Each of you chooses which meds to follow.")
                     }
 
@@ -87,15 +88,12 @@ Image(systemName: "person.2.fill")
         }
     }
 
-    private func perk(_ symbol: String, _ title: String, _ detail: String) -> some View {
+    private func perk(_ emoji: String, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: symbol)
-                .font(.system(size: 20))
-                .foregroundStyle(Theme.blushDeep)
-                .frame(width: 28)
+            Text(emoji).font(.system(size: 26))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Text(detail)
                     .font(.bloom(.subheadline))

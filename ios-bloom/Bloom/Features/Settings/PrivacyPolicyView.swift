@@ -26,7 +26,7 @@ struct PrivacyPolicyView: View {
                 ForEach(sections, id: \.0) { section in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(section.0)
-                            .font(.bloom(.headline, weight: .semibold))
+                            .font(.bloom(.headline, weight: .bold))
                             .foregroundStyle(Theme.text)
                         Text(section.1)
                             .font(.bloom(.body))

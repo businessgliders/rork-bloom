@@ -1,49 +1,41 @@
 import SwiftUI
 import UIKit
 
-/// Bloom's design tokens: system backgrounds, SF Pro, one deep-rose accent and
-/// solid status colours. Every colour adapts to light and dark mode and every
-/// text pairing below has been checked for at least 4.5:1 contrast.
-///
-/// Each hue has two roles:
-/// - the base token (`blush`, `coral`, `sage`, `peach`) is a *fill* that keeps
-///   white text at 4.5:1 or better in both modes;
-/// - the `…Deep` token is for *text and icons* on the system backgrounds.
+/// Bloom's design tokens. Every colour adapts to light and dark mode.
 enum Theme {
-    // Canvas & surfaces (native inset-grouped look)
-    static let canvas = Color(uiColor: .systemGroupedBackground)
-    static let surface = Color(uiColor: .secondarySystemGroupedBackground)
-    static let surfaceMuted = Color(uiColor: .tertiarySystemFill)
+    // Canvas & surfaces
+    static let canvas = Color(light: 0xFBF5EE, dark: 0x221A19)
+    static let surface = Color(light: 0xFFFFFF, dark: 0x2E2422)
+    static let surfaceMuted = Color(light: 0xF6EEE6, dark: 0x382C29)
 
     // Text
-    static let text = Color(uiColor: .label)
-    /// Secondary text, darker than the system grey so it stays at 4.5:1 on grouped backgrounds.
-    static let textSecondary = Color(light: 0x6C6C70, dark: 0xAEAEB2)
+    static let text = Color(light: 0x3A2C2A, dark: 0xF6ECE6)
+    static let textSecondary = Color(light: 0x9A8A84, dark: 0xB5A49D)
 
-    // Fills (white text on top stays ≥ 4.5:1)
-    static let blush = Color(light: 0xB42D55, dark: 0xCC3D66)      // accent: primary actions, current item
-    static let coral = Color(light: 0xC4312A, dark: 0xD03A33)      // no food
-    static let sage = Color(light: 0x1E7B3A, dark: 0x278445)       // food OK, done
-    static let peach = Color(light: 0xA85400, dark: 0xB35F00)      // wake / bed, AI
-    static let butter = Color(light: 0xA85400, dark: 0xB35F00)
+    // Accents
+    static let blush = Color(light: 0xEE9AA6, dark: 0xF0A4AF)
+    static let peach = Color(light: 0xF6B892, dark: 0xF4BE9C)
+    static let sage = Color(light: 0x9DBF9E, dark: 0xA3C6A4)
+    static let coral = Color(light: 0xF08A7E, dark: 0xF2968B)
+    static let butter = Color(light: 0xF5D98B, dark: 0xF2D88F)
 
-    // Text / icon colours on system backgrounds
-    static let blushDeep = Color(light: 0xB42D55, dark: 0xFF7A9C)
-    static let coralDeep = Color(light: 0xC4312A, dark: 0xFF6961)
-    static let sageDeep = Color(light: 0x1E7B3A, dark: 0x4CD07D)
-    static let peachDeep = Color(light: 0xA85400, dark: 0xFFA24D)
+    // Deeper accents for text / icons on soft tints (contrast)
+    static let blushDeep = Color(light: 0xD4677A, dark: 0xF4AEB8)
+    static let sageDeep = Color(light: 0x5C8C60, dark: 0xB4D6B5)
+    static let coralDeep = Color(light: 0xD45F4F, dark: 0xF7A99F)
+    static let peachDeep = Color(light: 0xD98450, dark: 0xF7C8A8)
 
-    // Quiet tints behind status text (the matching …Deep text stays ≥ 4.5:1)
-    static let blushSoft = Color(light: 0xF7E4EA, dark: 0x3A1F28)
-    static let peachSoft = Color(light: 0xFBEBDC, dark: 0x3B2A1A)
-    static let sageSoft = Color(light: 0xE3F1E6, dark: 0x1D3324)
-    static let coralSoft = Color(light: 0xFBE5E3, dark: 0x3D201E)
-    static let butterSoft = Color(light: 0xFBEBDC, dark: 0x3B2A1A)
+    // Soft tints
+    static let blushSoft = Color(light: 0xFBE3E4, dark: 0x4A2E31)
+    static let peachSoft = Color(light: 0xFDEBDD, dark: 0x4A3428)
+    static let sageSoft = Color(light: 0xDDEEDB, dark: 0x2F3D2F)
+    static let coralSoft = Color(light: 0xFBDCD6, dark: 0x4C2C28)
+    static let butterSoft = Color(light: 0xFCF1D2, dark: 0x463D26)
 
-    static let ringTrack = Color(uiColor: .systemFill)
-    static let separator = Color(uiColor: .separator)
+    static let ringTrack = Color(light: 0xF1E5DA, dark: 0x3B2F2C)
 
-    static let cardRadius: CGFloat = 12
+    static let cardRadius: CGFloat = 28
+    static let confettiColors: [Color] = [blush, peach, sage, butter, coral]
 }
 
 extension Color {
@@ -66,80 +58,72 @@ extension UIColor {
 }
 
 extension Font {
-    /// SF Pro at a Dynamic Type text style. Heavy weights are capped at bold
-    /// so the hierarchy comes from size, not weight.
+    /// Large rounded type used across Bloom.
     static func bloom(_ style: Font.TextStyle, weight: Font.Weight = .regular) -> Font {
-        let capped: Font.Weight = (weight == .heavy || weight == .black) ? .bold : weight
-        return .system(style, weight: capped)
+        .system(style, design: .rounded, weight: weight)
     }
 }
 
 // MARK: - Surfaces
 
-/// A flat grouped-section surface, the same shape as an inset-grouped list row.
 struct CardBackground: ViewModifier {
     var fill: Color = Theme.surface
-    var padding: CGFloat = 16
+    var padding: CGFloat = 20
 
     func body(content: Content) -> some View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(fill, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
+            .shadow(color: Color(light: 0xC9A893, dark: 0x000000).opacity(0.14), radius: 18, y: 8)
     }
 }
 
 extension View {
-    func bloomCard(fill: Color = Theme.surface, padding: CGFloat = 16) -> some View {
+    func bloomCard(fill: Color = Theme.surface, padding: CGFloat = 20) -> some View {
         modifier(CardBackground(fill: fill, padding: padding))
     }
 }
 
 // MARK: - Buttons
 
-/// Filled accent button for the one primary action on a screen.
 struct BloomPrimaryButtonStyle: ButtonStyle {
     var tint: Color = Theme.blush
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.bloom(.body, weight: .semibold))
-            .foregroundStyle(isEnabled ? Color.white : Color(uiColor: .secondaryLabel))
-            .frame(maxWidth: .infinity, minHeight: 50)
-            .padding(.horizontal, 16)
-            .background(
-                isEnabled ? tint : Color(uiColor: .tertiarySystemFill),
-                in: .rect(cornerRadius: 12, style: .continuous)
-            )
-            .opacity(configuration.isPressed ? 0.75 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+            .font(.bloom(.title3, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+            .background(tint.opacity(isEnabled ? 1 : 0.4), in: .capsule)
+            .shadow(color: tint.opacity(isEnabled ? 0.35 : 0), radius: 12, y: 6)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
-/// Plain accent-coloured text button for secondary actions.
 struct BloomSoftButtonStyle: ButtonStyle {
     var tint: Color = Theme.blushDeep
-    /// Kept for source compatibility; secondary buttons have no fill.
-    var fill: Color = .clear
-    @Environment(\.isEnabled) private var isEnabled
+    var fill: Color = Theme.blushSoft
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.bloom(.body, weight: .regular))
-            .foregroundStyle(isEnabled ? tint : Color(uiColor: .tertiaryLabel))
-            .padding(.vertical, 10)
-            .padding(.horizontal, 4)
-            .contentShape(.rect)
-            .opacity(configuration.isPressed ? 0.5 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+            .font(.bloom(.headline, weight: .bold))
+            .foregroundStyle(tint)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 18)
+            .background(fill, in: .capsule)
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
 struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.6 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.65), value: configuration.isPressed)
     }
 }

@@ -119,7 +119,7 @@ struct QuickAddMedicationView: View {
     private var startStep: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Just say it")
-                .font(.bloom(.largeTitle, weight: .bold))
+                .font(.bloom(.largeTitle, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text("Type it like you'd tell a friend. Bloom fills in the rest for you to check.")
                 .font(.bloom(.subheadline))
@@ -221,7 +221,7 @@ struct QuickAddMedicationView: View {
             openFullForm(prefillName: true)
         } label: {
             Text("Fill in the full form instead")
-                .font(.bloom(.subheadline, weight: .semibold))
+                .font(.bloom(.subheadline, weight: .bold))
                 .foregroundStyle(Theme.blushDeep)
                 .frame(maxWidth: .infinity)
         }
@@ -241,7 +241,7 @@ struct QuickAddMedicationView: View {
                     ProgressView().tint(tint)
                 } else {
                     Image(systemName: icon)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(tint)
                 }
             }
@@ -249,7 +249,7 @@ struct QuickAddMedicationView: View {
             .background(fill, in: .circle)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
                 Text(subtitle)
                     .font(.bloom(.caption))
@@ -266,7 +266,7 @@ struct QuickAddMedicationView: View {
     private var scanTextStep: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Here's what we read")
-                .font(.bloom(.title, weight: .bold))
+                .font(.bloom(.title, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text("Only this text is sent. Edit or delete anything you'd rather keep private.")
                 .font(.bloom(.subheadline))
@@ -319,7 +319,7 @@ struct QuickAddMedicationView: View {
     private var consentStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Before Bloom reads it", systemImage: "hand.raised.fill")
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text("To fill this in, Bloom sends only this text to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini:")
                 .font(.bloom(.subheadline))
@@ -341,7 +341,7 @@ struct QuickAddMedicationView: View {
                     store.setAILookupConsent(true)
                     run(pendingText)
                 }
-                .buttonStyle(BloomPrimaryButtonStyle(tint: Theme.blush))
+                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
                 .accessibilityIdentifier("ai-consent-allow")
                 Button("Fill in myself") {
                     openFullForm(prefillName: true)
@@ -356,11 +356,17 @@ struct QuickAddMedicationView: View {
 
     private var parsingStep: some View {
         VStack(spacing: 18) {
-            ProgressView()
-                .controlSize(.large)
-                .tint(Theme.blushDeep)
+            ZStack {
+                BlobShape(seed: 5)
+                    .fill(Theme.peachSoft)
+                    .frame(width: 150, height: 140)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 48, weight: .bold))
+                    .foregroundStyle(Theme.peachDeep)
+                    .symbolEffect(.variableColor.iterative, options: .repeating)
+            }
             Text("Reading it…")
-                .font(.bloom(.title2, weight: .semibold))
+                .font(.bloom(.title2, weight: .heavy))
                 .foregroundStyle(Theme.text)
             Text(fromScan ? "Turning the label into a reminder." : "“\(pendingText)”")
                 .font(.bloom(.subheadline))
@@ -382,7 +388,7 @@ struct QuickAddMedicationView: View {
                     .overlay { photoBadge(size: 44) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(draft.shortName)
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .heavy))
                         .foregroundStyle(Theme.text)
                     if !draft.dose.isEmpty {
                         Text(draft.dose)
@@ -394,7 +400,7 @@ struct QuickAddMedicationView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 Text(followUp.question)
-                    .font(.bloom(.title2, weight: .semibold))
+                    .font(.bloom(.title2, weight: .heavy))
                     .foregroundStyle(Theme.text)
                 FlowLayout(spacing: 10) {
                     ForEach(followUp.options) { option in
@@ -402,7 +408,7 @@ struct QuickAddMedicationView: View {
                             chooseTimes(option.times)
                         } label: {
                             Text(option.label)
-                                .font(.bloom(.headline, weight: .semibold))
+                                .font(.bloom(.headline, weight: .bold))
                                 .foregroundStyle(Theme.blushDeep)
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -418,7 +424,7 @@ struct QuickAddMedicationView: View {
                         .font(.bloom(.subheadline, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                     Button("Use") { chooseTimes([DoseTime(date: customTime)]) }
-                        .buttonStyle(BloomPrimaryButtonStyle(tint: Theme.blush))
+                        .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
                 }
             }
             .bloomCard()
@@ -435,7 +441,7 @@ struct QuickAddMedicationView: View {
                 .overlay { photoBadge(size: 64) }
             VStack(alignment: .leading, spacing: 2) {
                 TextField("Short name", text: $draft.friendlyName)
-                    .font(.bloom(.title, weight: .bold))
+                    .font(.bloom(.title, weight: .heavy))
                     .foregroundStyle(Theme.text)
                     .accessibilityIdentifier("review-friendly-name")
                 if draft.fullName.caseInsensitiveCompare(draft.shortName) != .orderedSame {
@@ -480,7 +486,7 @@ struct QuickAddMedicationView: View {
         // Who takes it
         VStack(alignment: .leading, spacing: 10) {
             Text("Who takes this?")
-                .font(.bloom(.subheadline, weight: .semibold))
+                .font(.bloom(.subheadline, weight: .heavy))
                 .foregroundStyle(Theme.textSecondary)
             Picker("Who takes this?", selection: $draft.owner) {
                 Text(momLabel).tag(MedOwner.mom)
@@ -491,7 +497,7 @@ struct QuickAddMedicationView: View {
 
             if store.isShared {
                 Text("For me")
-                    .font(.bloom(.subheadline, weight: .semibold))
+                    .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 6)
                 Picker("For me", selection: Binding(get: { followMode }, set: { chosenFollow = $0 })) {
@@ -514,13 +520,13 @@ struct QuickAddMedicationView: View {
         PhotoMenu(image: $photo) {
             HStack(spacing: 12) {
                 Image(systemName: photo == nil ? "camera.fill" : "photo.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Theme.sageDeep)
                     .frame(width: 40, height: 40)
                     .background(Theme.sageSoft, in: .circle)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(photo == nil ? "Add a photo" : "Change photo")
-                        .font(.bloom(.headline, weight: .semibold))
+                        .font(.bloom(.headline, weight: .bold))
                         .foregroundStyle(Theme.text)
                     Text(store.isShared ? "Pill or box, so it's easy to spot. Shared with your partner." : "Pill or box, so it's easy to spot. Stays on your iPhone.")
                         .font(.bloom(.caption))
@@ -528,7 +534,7 @@ struct QuickAddMedicationView: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Theme.textSecondary)
             }
             .bloomCard(padding: 14)
@@ -555,7 +561,7 @@ struct QuickAddMedicationView: View {
             fullForm = FullFormSeed(medication: draft.previewMedication(photo: nil), photo: photo, confirmed: draft.confirmed)
         } label: {
             Text("Edit details")
-                .font(.bloom(.headline, weight: .semibold))
+                .font(.bloom(.headline, weight: .bold))
                 .foregroundStyle(Theme.blushDeep)
                 .frame(maxWidth: .infinity)
         }
@@ -582,7 +588,7 @@ struct QuickAddMedicationView: View {
 
     private var dot: some View {
         Text("·")
-            .font(.bloom(.title3, weight: .semibold))
+            .font(.bloom(.title3, weight: .heavy))
             .foregroundStyle(Theme.textSecondary)
             .padding(.vertical, 6)
     }
@@ -594,13 +600,13 @@ struct QuickAddMedicationView: View {
         } label: {
             HStack(spacing: 4) {
                 if suggested {
-                    Image(systemName: "sparkles").font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "sparkles").font(.system(size: 11, weight: .bold))
                 }
                 if missing {
-                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "plus").font(.system(size: 11, weight: .bold))
                 }
                 Text(text)
-                    .font(.bloom(.headline, weight: .semibold))
+                    .font(.bloom(.headline, weight: .bold))
                     .lineLimit(1)
             }
             .foregroundStyle(suggested ? Theme.peachDeep : (missing ? Theme.textSecondary : Theme.text))
@@ -608,7 +614,7 @@ struct QuickAddMedicationView: View {
             .padding(.vertical, 8)
             .background {
                 if missing {
-                    Capsule().strokeBorder(Theme.textSecondary, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    Capsule().strokeBorder(Theme.textSecondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                 } else {
                     Capsule().fill(suggested ? Theme.peachSoft : Theme.surfaceMuted)
                 }
@@ -893,7 +899,7 @@ private struct ChipEditorSheet: View {
     private var nameEditor: some View {
         Section {
             TextField("Short name, e.g. Iron", text: $draft.friendlyName)
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .bold))
         } header: {
             Text("Shown everywhere")
         }
@@ -904,12 +910,33 @@ private struct ChipEditorSheet: View {
         } footer: {
             Text("Shown in the medication's details.")
         }
+        Section("Icon") {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Medication.emojiChoices, id: \.self) { choice in
+                        Button {
+                            Haptics.select()
+                            draft.emoji = choice
+                        } label: {
+                            Text(choice)
+                                .font(.system(size: 24))
+                                .frame(width: 44, height: 44)
+                                .background(draft.emoji == choice ? Theme.blushSoft : Theme.surfaceMuted, in: .circle)
+                                .overlay(Circle().stroke(draft.emoji == choice ? Theme.blush : .clear, lineWidth: 2))
+                        }
+                        .buttonStyle(PressableStyle())
+                        .accessibilityLabel("Icon \(choice)")
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
     }
 
     private var doseEditor: some View {
         Section {
             TextField("e.g. 1 tablet, 75 mcg", text: $draft.dose)
-                .font(.bloom(.title3, weight: .semibold))
+                .font(.bloom(.title3, weight: .bold))
         } footer: {
             Text("Copy this from your prescription label. Bloom never suggests doses.")
         }
@@ -940,7 +967,7 @@ private struct ChipEditorSheet: View {
                             draft.schedule = .weekdays(next)
                         } label: {
                             Text(PregnancyMath.calendar.veryShortWeekdaySymbols[day - 1])
-                                .font(.bloom(.subheadline, weight: .semibold))
+                                .font(.bloom(.subheadline, weight: .bold))
                                 .foregroundStyle(on ? .white : Theme.textSecondary)
                                 .frame(maxWidth: .infinity, minHeight: 38)
                                 .background(on ? Theme.blush : Theme.surfaceMuted, in: .circle)
