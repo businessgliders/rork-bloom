@@ -1,0 +1,14 @@
+{
+  "$schema": "https://rork.com/schema/rork.json",
+  "apps": [
+    {
+      "name": "Bloom",
+      "path": "ios-bloom",
+      "framework": "swift",
+      "settings": {
+        "swiftSibling": false,
+        "iosBundleId": "app.businessgliders.bloom"
+      }
+    }
+  ]
+}
