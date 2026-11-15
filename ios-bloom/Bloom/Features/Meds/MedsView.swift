@@ -17,7 +17,6 @@ struct MedsView: View {
     /// Whose meds are on screen when shared (nil = the default for this viewer).
     @State private var personChoice: MedOwner?
     @State private var showQuiz = false
-    @State private var showBox = false
     @State private var path = NavigationPath()
     /// An older log waiting for "Undo … taken at …?" confirmation.
     @State private var pendingUndo: DoseInstance?
@@ -98,27 +97,21 @@ struct MedsView: View {
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
                 case .schedule(let who):
-                    TemplatesView(owner: who, onEdit: { openEditor($0) })
+                    MedsRoutinesView(owner: who)
                 }
             }
         }
         .sheet(isPresented: $showQuiz) {
             RoutineQuizView(owner: owner, template: nil, days: nil) { saved in
                 showQuiz = false
-                // A new routine goes straight on to the medication list.
-                if saved != nil, store.scheduledMedications(for: owner).isEmpty {
+                // A new routine goes straight on to Meds & routines, where she writes her meds.
+                if saved != nil {
                     Task {
                         try? await Task.sleep(for: .milliseconds(450))
-                        showBox = true
+                        path.append(MedsRoute.schedule(owner))
                     }
                 }
             }
-        }
-        .sheet(isPresented: $showBox) {
-            MedsBoxView(owner: owner, onClose: { showBox = false }, onOpenSchedule: {
-                showBox = false
-                path.append(MedsRoute.schedule(owner))
-            })
         }
         .inspector(isPresented: $showEditor) {
             Group {
@@ -423,10 +416,10 @@ struct MedsView: View {
         }
     }
 
-    /// No routine yet: the quiz first (it hands over to the medication box). Otherwise the box.
+    /// No routine yet: the quiz first (it hands over to Meds & routines). Otherwise straight there.
     private func startAdd() {
         Haptics.tap()
-        if store.hasRoutine(owner) { showBox = true } else { showQuiz = true }
+        if store.hasRoutine(owner) { path.append(MedsRoute.schedule(owner)) } else { showQuiz = true }
     }
 
     // MARK: Celebration wording

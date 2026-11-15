@@ -52,6 +52,8 @@ struct PersistedState: Codable {
     var templates: [ScheduleTemplate] = []
     var rules: [ScheduleRule] = []
     var overrides: [DayOverride] = []
+    // v6: "Your meds & rules" exactly as typed, per person (owner raw value). Kept on this phone only.
+    var medsText: [String: String] = [:]
 
     init(
         profile: PregnancyProfile?,
@@ -73,9 +75,11 @@ struct PersistedState: Codable {
         liveMedicationIDs: [UUID]? = nil,
         templates: [ScheduleTemplate] = [],
         rules: [ScheduleRule] = [],
-        overrides: [DayOverride] = []
+        overrides: [DayOverride] = [],
+        medsText: [String: String] = [:]
     ) {
-        self.version = 5
+        self.version = 6
+        self.medsText = medsText
         self.templates = templates
         self.rules = rules
         self.overrides = overrides
@@ -122,6 +126,7 @@ struct PersistedState: Codable {
         templates = (try? c.decodeIfPresent([ScheduleTemplate].self, forKey: .templates)) ?? []
         rules = (try? c.decodeIfPresent([ScheduleRule].self, forKey: .rules)) ?? []
         overrides = (try? c.decodeIfPresent([DayOverride].self, forKey: .overrides)) ?? []
+        medsText = (try? c.decodeIfPresent([String: String].self, forKey: .medsText)) ?? [:]
     }
 }
 
@@ -190,6 +195,8 @@ final class AppStore {
     var templates: [ScheduleTemplate] = []
     var rules: [ScheduleRule] = []
     var overrides: [DayOverride] = []
+    /// "Your meds & rules" exactly as typed, per person (edited from AppStore+MedsText.swift).
+    var medsText: [MedOwner: String] = [:]
     /// Set after a dose is taken off-schedule; Today asks "Just today" or "Update my template".
     var scheduleChange: ScheduleChange?
 
@@ -368,6 +375,7 @@ final class AppStore {
         guard let index = medications.firstIndex(where: { $0.id == medication.id }) else { return }
         let yesterday = PregnancyMath.addDays(-1, to: now)
         medications[index].endDate = max(yesterday, PregnancyMath.calendar.startOfDay(for: medications[index].startDate))
+        medications[index].paused = true
         enqueue(.medication, medication.id.uuidString)
         saveAndReschedule()
     }
@@ -375,6 +383,7 @@ final class AppStore {
     func resumeMedication(_ medication: Medication) {
         guard let index = medications.firstIndex(where: { $0.id == medication.id }) else { return }
         medications[index].endDate = nil
+        medications[index].paused = false
         enqueue(.medication, medication.id.uuidString)
         saveAndReschedule()
     }
@@ -1046,7 +1055,8 @@ final class AppStore {
             appearance: appearance,
             templates: templates,
             rules: rules,
-            overrides: overrides
+            overrides: overrides,
+            medsText: Dictionary(uniqueKeysWithValues: medsText.map { ($0.key.rawValue, $0.value) })
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -1077,6 +1087,7 @@ final class AppStore {
         templates = []
         rules = []
         overrides = []
+        medsText = [:]
         scheduleChange = nil
         aiLookupConsent = nil
         celebration = nil
@@ -1134,6 +1145,7 @@ final class AppStore {
         templates = state.templates
         rules = state.rules
         overrides = state.overrides
+        medsText = Dictionary(uniqueKeysWithValues: state.medsText.compactMap { key, value in MedOwner(rawValue: key).map { ($0, value) } })
     }
 
     /// The one place med changes fan out: file, notifications, widgets, Live Activity, Reminders.
@@ -1174,7 +1186,8 @@ final class AppStore {
             liveMedicationIDs: isShared ? liveMedications.map(\.id) : nil,
             templates: templates,
             rules: rules,
-            overrides: overrides
+            overrides: overrides,
+            medsText: Dictionary(uniqueKeysWithValues: medsText.map { ($0.key.rawValue, $0.value) })
         )
         guard let data = try? Self.encoder.encode(state) else { return }
         SharedStateFile.write(data)

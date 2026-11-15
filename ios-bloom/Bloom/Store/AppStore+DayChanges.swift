@@ -67,10 +67,15 @@ struct ScheduleChange: Identifiable, Equatable {
     var draft: ScheduleTemplate?
     /// Routine edits: "Just today" only makes sense when today follows this routine.
     var canApplyToday = true
+    /// Doses on the day before (and for routines, the day after), for gap rules across midnight.
+    var adjacent: [UUID: [Int]] = [:]
+    /// A late evening dose moves tomorrow's doses: the change is for tomorrow only.
+    var isNextDay = false
 
     var routine: EngineRoutine {
         EngineRoutine(wake: wake, bed: bed,
-                      meals: meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) })
+                      meals: meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
+                      adjacent: adjacent)
     }
 
     /// Rules are broken and she hasn't chosen "Keep anyway".
@@ -105,10 +110,13 @@ struct DayState {
     var pinned: Set<UUID>
     var meds: [EngineMed]
     var range: ClosedRange<Int>
+    /// The day before's doses on this day's axis (negative minutes), taken ones at the time taken.
+    var adjacent: [UUID: [Int]] = [:]
 
     var routine: EngineRoutine {
         EngineRoutine(wake: wake, bed: bed,
-                      meals: meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) })
+                      meals: meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
+                      adjacent: adjacent)
     }
 }
 
@@ -154,21 +162,37 @@ extension AppStore {
         var lower = wake
         if cal.isDateInToday(day) { lower = max(wake, ScheduleEngine.roundUp(minutes(.now))) }
         return DayState(template: r.template, wake: wake, bed: bed, meals: r.meals, times: times, fixed: fixed,
-                        pinned: pinned, meds: meds, range: lower...max(bed, lower))
+                        pinned: pinned, meds: meds, range: lower...max(bed, lower),
+                        adjacent: previousDayDoses(owner, before: day))
     }
 
-    /// Rules whose medications are all on the day.
-    private func usableRules(_ owner: MedOwner, times: [UUID: Int]) -> [ScheduleRule] {
-        rules(for: owner).filter {
-            times[$0.subjectID] != nil && ($0.target != .medication || times[$0.targetMedicationID ?? UUID()] != nil)
-        } + ScheduleEngine.dayBounds(for: times.keys)
+    /// The day before's doses on `day`'s minute axis: negative minutes, taken doses at the time taken
+    /// (one taken just after midnight lands on 0 or later). Skipped doses don't count.
+    func previousDayDoses(_ owner: MedOwner, before day: Date) -> [UUID: [Int]] {
+        let cal = PregnancyMath.calendar
+        let start = cal.startOfDay(for: day)
+        guard let yesterday = cal.date(byAdding: .day, value: -1, to: start) else { return [:] }
+        var result: [UUID: [Int]] = [:]
+        for item in instances(on: yesterday) where item.medication.owner == owner && item.medication.managed && !item.isSkipped {
+            result[item.medication.id, default: []].append(Int(item.anchor.timeIntervalSince(start) / 60))
+        }
+        return result
+    }
+
+    /// Rules whose medications are on the day; gap rules also when the other side is on the day before.
+    private func usableRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:]) -> [ScheduleRule] {
+        let routine = EngineRoutine(wake: 0, bed: 0, meals: [], adjacent: adjacent)
+        let ids = Set(times.keys)
+        return rules(for: owner).filter { ScheduleEngine.applies($0, on: ids, routine: routine) }
+            + ScheduleEngine.dayBounds(for: times.keys)
     }
 
     /// Rules that can still matter: they involve a dose not logged yet (or a meal she just moved).
-    private func openRules(_ owner: MedOwner, times: [UUID: Int], fixed: Set<UUID>, mealsChanged: Bool) -> [ScheduleRule] {
-        usableRules(owner, times: times).filter { rule in
-            if !fixed.contains(rule.subjectID) { return true }
-            if rule.target == .medication, let other = rule.targetMedicationID, !fixed.contains(other) { return true }
+    private func openRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:], fixed: Set<UUID>,
+                           mealsChanged: Bool) -> [ScheduleRule] {
+        usableRules(owner, times: times, adjacent: adjacent).filter { rule in
+            if times[rule.subjectID] != nil, !fixed.contains(rule.subjectID) { return true }
+            if rule.target == .medication, let other = rule.targetMedicationID, times[other] != nil, !fixed.contains(other) { return true }
             return mealsChanged && (rule.target == .food || rule.target == .meal)
         }
     }
@@ -176,7 +200,7 @@ extension AppStore {
     /// Rules broken right now on a day, by doses not logged yet. Rows show a warning icon for these.
     func dayViolations(_ owner: MedOwner, on day: Date) -> [RuleViolation] {
         guard let s = dayState(owner, on: day) else { return [] }
-        let open = openRules(owner, times: s.times, fixed: s.fixed, mealsChanged: false)
+        let open = openRules(owner, times: s.times, adjacent: s.adjacent, fixed: s.fixed, mealsChanged: false)
         return ScheduleEngine.violations(times: s.times, routine: s.routine, rules: open, names: medicationNames)
     }
 
@@ -206,11 +230,11 @@ extension AppStore {
             return nil
         }
         let routine = s.routine
-        let rules = usableRules(owner, times: s.times)
+        let rules = usableRules(owner, times: s.times, adjacent: s.adjacent)
         let settled = ScheduleEngine.settle(times: s.times, locked: locked, meds: s.meds, routine: routine, rules: rules, range: s.range)
         var moved: [UUID: Int] = [:]
         for (id, t) in settled where id != subject && before[id] != t { moved[id] = t }
-        let open = openRules(owner, times: settled, fixed: s.fixed, mealsChanged: mealsChanged)
+        let open = openRules(owner, times: settled, adjacent: s.adjacent, fixed: s.fixed, mealsChanged: mealsChanged)
         var broken: [UUID: String] = [:]
         for v in ScheduleEngine.violations(times: settled, routine: routine, rules: open, names: medicationNames) where broken[v.rule.subjectID] == nil {
             broken[v.rule.subjectID] = ScheduleEngine.shortReason(v)
@@ -223,7 +247,8 @@ extension AppStore {
     /// Works out a change to one day and shows it inline. Returns nil when there is nothing to ask
     /// (a late log that moves nothing, or a review with nothing broken).
     @discardableResult
-    func proposeDayChange(owner: MedOwner, day: Date, edit: DayEdit, placement: ScheduleChange.Placement) -> ScheduleChange? {
+    func proposeDayChange(owner: MedOwner, day: Date, edit: DayEdit, placement: ScheduleChange.Placement,
+                          nextDay: Bool = false) -> ScheduleChange? {
         guard var s = dayState(owner, on: day) else { return nil }
         let names = medicationNames
         let original = s.times
@@ -256,13 +281,13 @@ extension AppStore {
         }
         if kind != .review {
             s.times = ScheduleEngine.settle(times: s.times, locked: locked, meds: s.meds, routine: s.routine,
-                                            rules: usableRules(owner, times: s.times), range: s.range)
+                                            rules: usableRules(owner, times: s.times, adjacent: s.adjacent), range: s.range)
         }
         var change = ScheduleChange(
             kind: kind, placement: placement, owner: owner, date: PregnancyMath.calendar.startOfDay(for: day),
             templateID: s.template.id, routineName: s.template.displayName, subjectID: subjectID, subjectName: subjectName,
             wake: s.wake, bed: s.bed, meals: s.meals, mealsChanged: mealsChanged, times: s.times, original: original,
-            fixed: s.fixed, pinned: s.pinned, range: s.range
+            fixed: s.fixed, pinned: s.pinned, range: s.range, adjacent: s.adjacent, isNextDay: nextDay
         )
         refreshProblems(&change)
         switch kind {
@@ -270,6 +295,8 @@ extension AppStore {
             let moves = change.times.contains { $0.key != subjectID && original[$0.key] != $0.value }
             let mine = change.problems.contains { subjectID.map($0.violation.rule.involves) ?? false }
             guard moves || mine else { return nil }
+            // Tomorrow: only worth asking when a dose actually moves.
+            if nextDay, !moves { return nil }
         case .review:
             guard !change.problems.isEmpty else { return nil }
         default:
@@ -281,13 +308,14 @@ extension AppStore {
 
     /// An edit on the Routines screen: re-places the routine's doses and shows the result inside it.
     func proposeRoutineChange(original: ScheduleTemplate, edited: ScheduleTemplate, movedDose: UUID? = nil) {
-        let routine = EngineRoutine(edited)
+        let adjacent = ScheduleCycle.adjacent(for: edited, in: templates(for: original.owner))
+        let routine = EngineRoutine(edited, adjacent: adjacent)
         let meds = engineMeds(for: edited)
         var times = Dictionary(edited.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
         for med in meds where times[med.id] == nil { times[med.id] = routine.wake }
         let before = Dictionary(original.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
         let range = routine.wake...max(routine.bed, routine.wake)
-        let rules = usableRules(original.owner, times: times)
+        let rules = usableRules(original.owner, times: times, adjacent: adjacent)
         let settled = ScheduleEngine.settle(times: times, locked: movedDose.map { [$0] } ?? [], meds: meds,
                                             routine: routine, rules: rules, range: range)
         let today = PregnancyMath.calendar.startOfDay(for: now)
@@ -298,7 +326,8 @@ extension AppStore {
             wake: edited.wake.minutesFromMidnight, bed: edited.bed.minutesFromMidnight, meals: edited.meals.sorted { $0.time < $1.time },
             mealsChanged: true, wakeBedChanged: true, times: settled, original: before, fixed: [],
             pinned: Set(edited.doses.filter(\.pinned).map(\.medicationID)), range: range,
-            draft: edited, canApplyToday: activeTemplate(for: original.owner, on: today)?.id == original.id
+            draft: edited, canApplyToday: activeTemplate(for: original.owner, on: today)?.id == original.id,
+            adjacent: adjacent
         )
         refreshProblems(&change)
         scheduleChange = change
@@ -308,8 +337,9 @@ extension AppStore {
     private func refreshProblems(_ change: inout ScheduleChange) {
         let names = medicationNames
         let routine = change.routine
-        let open = openRules(change.owner, times: change.times, fixed: change.fixed, mealsChanged: change.mealsChanged)
-        let usable = usableRules(change.owner, times: change.times)
+        let open = openRules(change.owner, times: change.times, adjacent: change.adjacent, fixed: change.fixed,
+                             mealsChanged: change.mealsChanged)
+        let usable = usableRules(change.owner, times: change.times, adjacent: change.adjacent)
         let violations = ScheduleEngine.violations(times: change.times, routine: routine, rules: open, names: names)
         change.suggestion = nil
         if let id = change.subjectID, change.kind == .dose || change.kind == .routine, let t = change.times[id],
@@ -358,7 +388,8 @@ extension AppStore {
             }
         }
         if parts.isEmpty { parts.append(change.kind == .routine ? "Medication times stay the same" : "Nothing else moves") }
-        return parts.joined(separator: " · ")
+        let line = parts.joined(separator: " · ")
+        return change.isNextDay ? "Tomorrow: \(line)" : line
     }
 
     // MARK: - Choices in the panel
@@ -503,7 +534,11 @@ extension AppStore {
     func proposeAfterLogging(_ instance: DoseInstance, placement: ScheduleChange.Placement) {
         let med = instance.medication
         guard med.managed, PregnancyMath.calendar.isDateInToday(instance.scheduledAt) else { return }
-        proposeDayChange(owner: med.owner, day: instance.scheduledAt, edit: .logged(med.id), placement: placement)
+        if proposeDayChange(owner: med.owner, day: instance.scheduledAt, edit: .logged(med.id), placement: placement) != nil { return }
+        // Nothing moves today: a late evening dose can still push tomorrow morning (a gap rule across midnight).
+        guard let tomorrow = PregnancyMath.calendar.date(byAdding: .day, value: 1, to: PregnancyMath.calendar.startOfDay(for: instance.scheduledAt))
+        else { return }
+        proposeDayChange(owner: med.owner, day: tomorrow, edit: .logged(med.id), placement: placement, nextDay: true)
     }
 
     // MARK: - Routines for a day
@@ -553,9 +588,9 @@ extension AppStore {
 
     /// One-tap fixes for a rule a routine breaks.
     func templateFixes(_ template: ScheduleTemplate, for violation: RuleViolation) -> [ScheduleFix] {
-        let routine = EngineRoutine(template)
+        let routine = engineRoutine(template)
         let times = Dictionary(template.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
-        let rules = usableRules(template.owner, times: times)
+        let rules = usableRules(template.owner, times: times, adjacent: routine.adjacent)
         let fixes = ScheduleEngine.fixes(for: violation, times: times, fixed: [], routine: routine,
                                          rules: rules, names: medicationNames,
                                          range: routine.wake...max(routine.bed, routine.wake), allowSkip: false,
@@ -566,10 +601,10 @@ extension AppStore {
     }
 
     func templateBlockedReason(_ template: ScheduleTemplate, for violation: RuleViolation) -> String {
-        let routine = EngineRoutine(template)
+        let routine = engineRoutine(template)
         let times = Dictionary(template.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
         return ScheduleEngine.blockedReason(for: violation, times: times, fixed: [], routine: routine,
-                                            rules: usableRules(template.owner, times: times), names: medicationNames,
+                                            rules: usableRules(template.owner, times: times, adjacent: routine.adjacent), names: medicationNames,
                                             range: routine.wake...max(routine.bed, routine.wake))
     }
 

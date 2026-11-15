@@ -73,10 +73,17 @@ struct MedsTodayList: View {
             let start = meal.time.date(on: day)
             return .meal(meal, start: start, end: start.addingTimeInterval(Double(meal.durationMinutes) * 60))
         }
-        list.sort { key($0) < key($1) }
+        // Stable: doses at the same minute keep the instances' order (her text's order).
+        func stableSort(_ items: [Entry]) -> [Entry] {
+            items.enumerated().sorted { a, b in
+                let ka = key(a.element), kb = key(b.element)
+                return ka != kb ? ka < kb : a.offset < b.offset
+            }.map(\.element)
+        }
+        list = stableSort(list)
         if let now, !list.isEmpty, let first = list.first.map(key)?.0, let last = list.last.map(key)?.0, now > first, now < last {
             list.append(.now(now))
-            list.sort { key($0) < key($1) }
+            list = stableSort(list)
         }
         return list
     }

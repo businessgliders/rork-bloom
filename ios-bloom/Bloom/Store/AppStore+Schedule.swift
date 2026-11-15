@@ -90,25 +90,50 @@ extension AppStore {
         }
     }
 
-    /// The engine's placement for a template's routine and this person's rules.
-    func generate(_ template: ScheduleTemplate) -> (template: ScheduleTemplate, violations: [RuleViolation]) {
-        let result = ScheduleEngine.generate(routine: EngineRoutine(template), meds: engineMeds(for: template), rules: rules(for: template.owner))
-        var t = template
-        t.doses = engineMeds(for: template).compactMap { med in
-            guard let minutes = result.times[med.id] else { return nil }
-            let existing = template.dose(for: med.id)
-            return TemplateDose(id: existing?.id ?? UUID(), medicationID: med.id, time: DoseTime(minutes: minutes), pinned: med.pinned != nil)
+    /// The engine's placement for every routine of one person, as one cycle across midnight.
+    /// `replacing` stands in for the saved version of that routine (or is added when new).
+    /// Returns the placed routines and each one's broken rules; nothing is saved.
+    func generateCycle(_ owner: MedOwner, replacing: [ScheduleTemplate] = []) -> (templates: [ScheduleTemplate], violations: [UUID: [RuleViolation]]) {
+        var list = templates(for: owner)
+        for t in replacing {
+            if let i = list.firstIndex(where: { $0.id == t.id }) { list[i] = t } else { list.append(t) }
         }
-        return (t, result.violations)
+        return ScheduleCycle.generateAll(list, meds: { self.engineMeds(for: $0) }, rules: { self.rules(for: $0) })
+    }
+
+    /// Writes regenerated routines back, marking the ones that changed for upload.
+    private func storeGenerated(_ list: [ScheduleTemplate]) {
+        for t in list {
+            if let index = templates.firstIndex(where: { $0.id == t.id }) {
+                guard templates[index] != t else { continue }
+                templates[index] = t
+                templates[index].updatedAt = .now
+            } else {
+                var new = t
+                new.updatedAt = .now
+                templates.append(new)
+            }
+            enqueue(.template, t.id.uuidString)
+        }
+    }
+
+    /// Neighbour-day minutes for a routine (gap rules hold across midnight).
+    func templateAdjacent(_ template: ScheduleTemplate) -> [UUID: [Int]] {
+        ScheduleCycle.adjacent(for: template, in: templates(for: template.owner))
+    }
+
+    func engineRoutine(_ template: ScheduleTemplate) -> EngineRoutine {
+        EngineRoutine(template, adjacent: templateAdjacent(template))
     }
 
     /// Broken rules for a template's current (possibly hand-edited) times.
     func violations(in template: ScheduleTemplate) -> [RuleViolation] {
         let times = Dictionary(template.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
         let ids = Set(times.keys)
-        let relevant = rules(for: template.owner).filter { ids.contains($0.subjectID) && ($0.target != .medication || ids.contains($0.targetMedicationID ?? UUID())) }
+        let routine = engineRoutine(template)
+        let relevant = rules(for: template.owner).filter { ScheduleEngine.applies($0, on: ids, routine: routine) }
             + ScheduleEngine.dayBounds(for: ids)
-        return ScheduleEngine.violations(times: times, routine: EngineRoutine(template), rules: relevant, names: medicationNames)
+        return ScheduleEngine.violations(times: times, routine: routine, rules: relevant, names: medicationNames)
     }
 
     // MARK: - Templates
@@ -127,9 +152,11 @@ extension AppStore {
         if autoNamed { t.name = ScheduleTemplate.autoName(t.days) }
         var found: [RuleViolation]
         if regenerate {
-            let generated = generate(t)
-            t = generated.template
-            found = generated.violations
+            let generated = generateCycle(t.owner, replacing: [t])
+            if let placed = generated.templates.first(where: { $0.id == t.id }) { t = placed }
+            found = generated.violations[t.id] ?? []
+            // Neighbouring routines may shift too (a later bedtime here moves the morning after).
+            storeGenerated(generated.templates.filter { $0.id != t.id })
         } else {
             found = violations(in: t)
         }
@@ -183,7 +210,8 @@ extension AppStore {
                 if !draft.dose.trimmingCharacters(in: .whitespaces).isEmpty { med.dose = draft.dose }
                 med.managed = true
                 med.times = []
-                med.endDate = nil
+                // Paused from its sheet: stays paused until she resumes it there.
+                if !med.paused { med.endDate = nil }
                 med.rulesConfirmed = confirmed
                 medications[index] = med
                 keptIDs.insert(med.id)
@@ -228,9 +256,8 @@ extension AppStore {
             enqueue(.medication, id.uuidString)
         }
 
-        // Place everything in every routine of this person.
-        var found: [RuleViolation] = []
-        for template in templates(for: owner) {
+        // Place everything in every routine of this person, as one cycle across midnight.
+        let prepared = templates(for: owner).map { template -> ScheduleTemplate in
             var t = template
             t.doses = t.doses.filter { keptIDs.contains($0.medicationID) }
             for (id, time) in pinned {
@@ -241,14 +268,11 @@ extension AppStore {
                     t.doses.append(TemplateDose(medicationID: id, time: time, pinned: true))
                 }
             }
-            let generated = generate(t)
-            if found.isEmpty { found = generated.violations }
-            if let index = templates.firstIndex(where: { $0.id == t.id }) {
-                templates[index] = generated.template
-                templates[index].updatedAt = .now
-            }
-            enqueue(.template, t.id.uuidString)
+            return t
         }
+        let generated = generateCycle(owner, replacing: prepared)
+        let found = generated.templates.lazy.compactMap { generated.violations[$0.id] }.first { !$0.isEmpty } ?? []
+        storeGenerated(generated.templates)
         rebuildPlan()
         saveAndReschedule()
         return found
@@ -305,15 +329,14 @@ extension AppStore {
         var changedOwners = Set<MedOwner>()
 
         overrides.removeAll { $0.date < cal.date(byAdding: .day, value: -1, to: today) ?? today }
+        let planned = plannedDays(days)
 
         for index in medications.indices where medications[index].managed {
             let med = medications[index]
             var plan = med.plan.filter { (PlanDay.date($0.key) ?? today) >= oldest }
             for day in days {
                 let key = PlanDay.key(day)
-                let override = overrides.first { $0.owner == med.owner && cal.isDate($0.date, inSameDayAs: day) }
-                let time = override?.times[med.id] ?? (override == nil ? template(for: med.owner, on: day)?.dose(for: med.id)?.time : nil)
-                plan[key] = time
+                plan[key] = planned[med.owner]?[key]?[med.id].map { DoseTime(minutes: $0) }
             }
             if plan != med.plan {
                 medications[index].plan = plan
@@ -322,6 +345,42 @@ extension AppStore {
         }
         for owner in changedOwners { enqueue(.plan, owner.rawValue) }
         return !changedOwners.isEmpty
+    }
+
+    /// Each person's minutes per day: a "Just today" set when there is one, otherwise the routine's times,
+    /// settled against the day before where a gap rule would break across midnight (a Monday after a late
+    /// Sunday night). Keyed by owner, then `PlanDay.key`.
+    private func plannedDays(_ days: [Date]) -> [MedOwner: [String: [UUID: Int]]] {
+        let cal = PregnancyMath.calendar
+        var result: [MedOwner: [String: [UUID: Int]]] = [:]
+        for owner in Set(medications.filter(\.managed).map(\.owner)) {
+            let managed = medications.filter { $0.owner == owner && $0.managed }
+            var previous: [UUID: Int] = [:]
+            if let first = days.first, let before = cal.date(byAdding: .day, value: -1, to: first) {
+                let key = PlanDay.key(before)
+                for med in managed { previous[med.id] = med.plan[key]?.minutesFromMidnight }
+            }
+            var byDay: [String: [UUID: Int]] = [:]
+            for day in days {
+                var times: [UUID: Int] = [:]
+                if let o = override(for: owner, on: day) {
+                    for med in managed { times[med.id] = o.times[med.id]?.minutesFromMidnight }
+                } else if let t = template(for: owner, on: day) {
+                    for med in managed { times[med.id] = t.dose(for: med.id)?.time.minutesFromMidnight }
+                    if !previous.isEmpty, !times.isEmpty {
+                        let meds = engineMeds(for: t).filter { times[$0.id] != nil }
+                        times = ScheduleCycle.handover(
+                            times: times, previous: previous, wake: t.wake.minutesFromMidnight, bed: t.bed.minutesFromMidnight,
+                            meals: t.meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
+                            meds: meds, rules: rules(for: owner))
+                    }
+                }
+                byDay[PlanDay.key(day)] = times
+                previous = times
+            }
+            result[owner] = byDay
+        }
+        return result
     }
 
     /// First upload after sharing starts.

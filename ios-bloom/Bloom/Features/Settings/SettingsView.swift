@@ -111,7 +111,7 @@ struct SettingsView: View {
                 } header: {
                     Text("AI suggestions")
                 } footer: {
-                    Text("When on, only the medication text you type, or the label text you review after a scan (personal details removed, never the photo), is sent to Rork's AI service, via Vercel AI Gateway, to Google Gemini to fill in the medication and general timing info. It never suggests a dose. Turn off any time; everything else keeps working.")
+                    Text("When on, only the medication text you type, or the label text you review after a scan (personal details removed, never the photo), is sent to Rork's AI service, via Vercel AI Gateway, to Google Gemini to fill in the medication and general timing info. Lines in Meds & routines are read the same way by DeepSeek, or Anthropic Claude as a backup. It never suggests a dose. Turn off any time; everything else keeps working.")
                 }
 
                 Section {

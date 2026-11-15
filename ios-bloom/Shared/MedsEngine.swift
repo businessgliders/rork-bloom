@@ -130,7 +130,10 @@ nonisolated enum MedsEngine {
             }
         }
 
-        return result.sorted { ($0.scheduledAt, $0.medication.shortName) < ($1.scheduledAt, $1.medication.shortName) }
+        return result.sorted { lhs, rhs in
+            if lhs.scheduledAt != rhs.scheduledAt { return lhs.scheduledAt < rhs.scheduledAt }
+            return Medication.sameTimeOrder(lhs.medication, rhs.medication)
+        }
     }
 
     // MARK: Food windows

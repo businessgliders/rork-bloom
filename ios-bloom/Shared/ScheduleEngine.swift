@@ -13,19 +13,33 @@ nonisolated struct EngineRoutine: Equatable {
     var wake: Int
     var bed: Int
     var meals: [EngineMeal]
+    /// Doses on the neighbouring days on the same minute axis: the day before is negative (−1440…0),
+    /// the day after is past 1440. Gap rules ("10 h apart") are checked against these too, so the
+    /// schedule works as one continuous cycle across midnight.
+    var adjacent: [UUID: [Int]]
 
-    init(wake: Int, bed: Int, meals: [EngineMeal]) {
+    init(wake: Int, bed: Int, meals: [EngineMeal], adjacent: [UUID: [Int]] = [:]) {
         self.wake = wake
         self.bed = bed
         self.meals = meals.sorted { $0.start < $1.start }
+        self.adjacent = adjacent
     }
 
-    init(_ template: ScheduleTemplate) {
+    init(_ template: ScheduleTemplate, adjacent: [UUID: [Int]] = [:]) {
         self.init(
             wake: template.wake.minutesFromMidnight,
             bed: template.bed.minutesFromMidnight,
-            meals: template.meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) }
+            meals: template.meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
+            adjacent: adjacent
         )
+    }
+
+    /// Neighbour-day minutes from the day before's and the day after's times (each in 0..<1440).
+    static func adjacent(previous: [UUID: [Int]], next: [UUID: [Int]]) -> [UUID: [Int]] {
+        var result: [UUID: [Int]] = [:]
+        for (id, list) in previous { result[id, default: []] += list.map { $0 - 1440 } }
+        for (id, list) in next { result[id, default: []] += list.map { $0 + 1440 } }
+        return result.mapValues { Array(Set($0)).sorted() }
     }
 
     /// The meal a rule names: exact name first, then a name that contains it ("lunch" → "Lunch").
@@ -100,7 +114,7 @@ nonisolated enum ScheduleEngine {
                          fixed: [UUID: Int] = [:], earliest: Int? = nil) -> ScheduleResult {
         let names = Dictionary(meds.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
         let medIDs = Set(meds.map(\.id)).union(fixed.keys)
-        let usable = rules.filter { medIDs.contains($0.subjectID) && ($0.target != .medication || medIDs.contains($0.targetMedicationID ?? UUID())) }
+        let usable = rules.filter { applies($0, on: medIDs, routine: routine) }
         var times = fixed
 
         let lower = roundUp(max(routine.wake, earliest ?? routine.wake))
@@ -112,24 +126,28 @@ nonisolated enum ScheduleEngine {
                 continue
             }
             let relevant = usable.filter { $0.involves(med.id) }
-            var best: (count: Int, total: Int, time: Int)?
+            // Anchors ("at bedtime", "with lunch") win over gaps: when both can't hold, the dose stays on its
+            // anchor and the gap is reported, so the other dose moves instead (PM stays at bedtime, AM waits).
+            var best: (anchor: Int, count: Int, total: Int, time: Int)?
             var t = lower
             while t <= upper {
                 var candidate = times
                 candidate[med.id] = t
+                var anchor = 0
                 var count = 0
                 var total = 0
                 for rule in relevant {
                     if let d = deficit(rule, times: candidate, routine: routine), d > 0 {
+                        if rule.subjectID == med.id, isAnchor(rule) { anchor += d }
                         count += 1
                         total += d
                     }
                 }
                 if count == 0 {
-                    best = (0, 0, t)
+                    best = (0, 0, 0, t)
                     break
                 }
-                if best == nil || (count, total) < (best!.count, best!.total) { best = (count, total, t) }
+                if best == nil || (anchor, count, total) < (best!.anchor, best!.count, best!.total) { best = (anchor, count, total, t) }
                 t += step
             }
             times[med.id] = best?.time ?? lower
@@ -138,6 +156,22 @@ nonisolated enum ScheduleEngine {
         let placed = Set(meds.map(\.id)).subtracting(fixed.keys)
         let open = usable.filter { placed.contains($0.subjectID) || placed.contains($0.targetMedicationID ?? UUID()) }
         return ScheduleResult(times: times, violations: violations(times: times, routine: routine, rules: open, names: names))
+    }
+
+    /// "At waking", "at bedtime", "with lunch", "with food": a fixed point in her day.
+    static func isAnchor(_ rule: ScheduleRule) -> Bool {
+        (rule.relation == .at || rule.relation == .with) && rule.target != .medication
+    }
+
+    /// Whether a rule can be checked on a day with these medications: both sides on the day, or for a gap
+    /// rule ("apart") one side on the day and the other on a neighbouring day.
+    static func applies(_ rule: ScheduleRule, on ids: Set<UUID>, routine: EngineRoutine) -> Bool {
+        guard rule.target == .medication else { return ids.contains(rule.subjectID) }
+        let target = rule.targetMedicationID ?? UUID()
+        if ids.contains(rule.subjectID), ids.contains(target) { return true }
+        guard rule.relation == .apart else { return false }
+        return (ids.contains(rule.subjectID) && routine.adjacent[target] != nil)
+            || (ids.contains(target) && routine.adjacent[rule.subjectID] != nil)
     }
 
     /// Medications in an order where each comes after the ones its rules depend on (input order otherwise).
@@ -177,6 +211,10 @@ nonisolated enum ScheduleEngine {
 
     /// How many minutes a rule is off by (0 = satisfied), or nil when it can't be checked yet.
     static func deficit(_ rule: ScheduleRule, times: [UUID: Int], routine: EngineRoutine) -> Int? {
+        if rule.target == .medication, rule.relation == .apart {
+            let minV = rule.minMinutes ?? 0
+            return closestApartPair(rule, times: times, routine: routine).map { max(0, minV - abs($0.subject - $0.other)) }
+        }
         guard let t = times[rule.subjectID] else { return nil }
         let minV = rule.minMinutes ?? 0
         func range(_ d: Int) -> Int {
@@ -234,6 +272,19 @@ nonisolated enum ScheduleEngine {
         }
     }
 
+    /// For "X and Y at least N apart": the closest pair of doses where at least one is today
+    /// (today–today, today–the night before, today–the next day). Nil when no such pair exists.
+    static func closestApartPair(_ rule: ScheduleRule, times: [UUID: Int], routine: EngineRoutine) -> (subject: Int, other: Int)? {
+        guard let id = rule.targetMedicationID, id != rule.subjectID else { return nil }
+        var pairs: [(Int, Int)] = []
+        let s = times[rule.subjectID]
+        let o = times[id]
+        if let s, let o { pairs.append((s, o)) }
+        if let s { pairs += (routine.adjacent[id] ?? []).map { (s, $0) } }
+        if let o { pairs += (routine.adjacent[rule.subjectID] ?? []).map { ($0, o) } }
+        return pairs.min { abs($0.0 - $0.1) < abs($1.0 - $1.1) }.map { (subject: $0.0, other: $0.1) }
+    }
+
     /// "No food for `minutes` after the dose": no meal may overlap [t, t + minutes).
     private static func noFoodAfter(_ t: Int, minutes: Int, routine: EngineRoutine) -> Int {
         routine.meals.map { meal -> Int in
@@ -284,9 +335,25 @@ nonisolated enum ScheduleEngine {
                     fix = "Closest fix: take \(subject) at \(clock(goal))."
                 }
             case .apart:
-                message = "\(subject) and \(target) are now \(duration(abs(t - other))) apart; your rule is \(duration(minV))"
-                let goal = t >= other ? other + minV : other - minV
-                fix = "Closest fix: take \(subject) at \(clock(goal)), or change the rule to \(duration(abs(t - other)))."
+                let pair = closestApartPair(rule, times: times, routine: routine) ?? (t, other)
+                let gap = abs(pair.subject - pair.other)
+                func when(_ m: Int) -> String { m < 0 ? " the night before" : m >= 1440 ? " the next day" : "" }
+                if pair.other < 0 || pair.other >= 1440 {
+                    // Today's subject against the other medication on a neighbouring day.
+                    let side = pair.other < 0 ? "after" : "before"
+                    message = "\(subject) is now \(duration(gap)) \(side) \(target)\(when(pair.other)); your rule is \(duration(minV)) apart"
+                    let goal = pair.other < 0 ? pair.other + minV : pair.other - minV
+                    fix = "Closest fix: take \(subject) at \(clock(goal))."
+                } else if pair.subject < 0 || pair.subject >= 1440 {
+                    let side = pair.subject < 0 ? "after" : "before"
+                    message = "\(target) is now \(duration(gap)) \(side) \(subject)\(when(pair.subject)); your rule is \(duration(minV)) apart"
+                    let goal = pair.subject < 0 ? pair.subject + minV : pair.subject - minV
+                    fix = "Closest fix: take \(target) at \(clock(goal))."
+                } else {
+                    message = "\(subject) and \(target) are now \(duration(gap)) apart; your rule is \(duration(minV))"
+                    let goal = t >= other ? other + minV : other - minV
+                    fix = "Closest fix: take \(subject) at \(clock(goal)), or change the rule to \(duration(gap))."
+                }
             case .with, .at:
                 message = "\(subject) is now at \(clock(t)), not with \(target) at \(clock(other))"
                 fix = "Closest fix: take \(subject) at \(clock(other + (rule.relation == .at ? minV : 0)))."
@@ -571,7 +638,8 @@ nonisolated enum ScheduleEngine {
             : "\(subjectName) \(goes ? "goes" : "needs") \(text)."
 
         let target = rule.target == .medication ? rule.targetMedicationID : nil
-        let movable: UUID? = !fixed.contains(rule.subjectID) ? rule.subjectID : target.flatMap { fixed.contains($0) ? nil : $0 }
+        let movable: UUID? = !fixed.contains(rule.subjectID) && times[rule.subjectID] != nil
+            ? rule.subjectID : target.flatMap { fixed.contains($0) || times[$0] == nil ? nil : $0 }
         guard let id = movable else { return head }
         let name = names[id] ?? "It"
         let window = stride(from: 0, through: 1435, by: step).filter { t in

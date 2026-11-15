@@ -3,3 +3,4 @@ node_modules
 .expo
 .rork
 .sim-shots/
+__pycache__/

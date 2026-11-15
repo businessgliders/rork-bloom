@@ -170,6 +170,11 @@ nonisolated struct Medication: Codable, Identifiable, Equatable {
     /// Managed meds: the planned time for each local day (`PlanDay.key`), written by the store
     /// from templates and "Just today" overrides, so widgets and intents read the same plan.
     var plan: [String: DoseTime] = [:]
+    /// Where the medication is first named in her "Your meds & rules" text (0 = first). Doses at the same
+    /// minute follow this order everywhere: the list, Right now, widgets and the Live Activity.
+    var textOrder: Int?
+    /// Paused from its sheet: stopped like any other, but kept paused when her text is applied again.
+    var paused: Bool = false
 
     /// The times this medication is planned for on a day.
     func plannedTimes(on day: Date) -> [DoseTime] {
@@ -289,6 +294,17 @@ nonisolated struct Medication: Codable, Identifiable, Equatable {
         photoPath = try c.decodeIfPresent(String.self, forKey: .photoPath)
         managed = try c.decodeIfPresent(Bool.self, forKey: .managed) ?? false
         plan = (try? c.decodeIfPresent([String: DoseTime].self, forKey: .plan)) ?? [:]
+        textOrder = try c.decodeIfPresent(Int.self, forKey: .textOrder)
+        paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+    }
+
+    /// Same-time order: her text's order first, then the order they were added.
+    static func sameTimeOrder(_ a: Medication, _ b: Medication) -> Bool {
+        let ta = a.textOrder ?? Int.max
+        let tb = b.textOrder ?? Int.max
+        if ta != tb { return ta < tb }
+        if a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
+        return a.shortName < b.shortName
     }
 }
 

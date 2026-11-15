@@ -149,16 +149,19 @@ struct ScheduleChangePanel: View {
             Button {
                 store.applyChange(.today)
             } label: {
-                Text("Just today")
+                Text(change.isNextDay ? "Just tomorrow" : "Just today")
             }
             .buttonStyle(BloomPrimaryButtonStyle())
             .accessibilityIdentifier("change-today")
         }
         HStack {
-            Button(forwardLabel) { store.applyChange(.forward) }
-                .buttonStyle(BloomSoftButtonStyle())
-                .font(.bloom(.subheadline, weight: .semibold))
-                .accessibilityIdentifier("change-forward")
+            // A late dose moving tomorrow morning is a one-off: never offered as a new routine time.
+            if !change.isNextDay {
+                Button(forwardLabel) { store.applyChange(.forward) }
+                    .buttonStyle(BloomSoftButtonStyle())
+                    .font(.bloom(.subheadline, weight: .semibold))
+                    .accessibilityIdentifier("change-forward")
+            }
             Spacer()
             Button(undoLabel) { store.discardChange() }
                 .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))

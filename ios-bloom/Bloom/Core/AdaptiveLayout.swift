@@ -87,11 +87,20 @@ extension View {
     }
 }
 
+extension View {
+    /// Bottom bars pinned with safeAreaInset: keep them clear of the Duo's vertical bar.
+    func duoBarClearance() -> some View {
+        modifier(DuoListClearance(barOnly: true))
+    }
+}
+
 private struct DuoListClearance: ViewModifier {
+    var barOnly = false
+
     func body(content: Content) -> some View {
 #if canImport(SwiftUI, _version: 8.0.85)
         if #available(iOS 27.1, *) {
-            content.modifier(DuoListClearanceBars())
+            content.modifier(DuoListClearanceBars(barOnly: barOnly))
         } else {
             content
         }
@@ -104,10 +113,13 @@ private struct DuoListClearance: ViewModifier {
 #if canImport(SwiftUI, _version: 8.0.85)
 @available(iOS 27.1, *)
 private struct DuoListClearanceBars: ViewModifier {
+    var barOnly: Bool
     @Environment(\.toolbarVerticalEdge) private var edge
 
     func body(content: Content) -> some View {
-        if let edge {
+        if let edge, barOnly {
+            content.padding(edge == .trailing ? .trailing : .leading, 72)
+        } else if let edge {
             content
                 .contentMargins(.top, 80, for: .scrollContent)
                 .contentMargins(edge == .trailing ? .trailing : .leading, 76, for: .scrollContent)

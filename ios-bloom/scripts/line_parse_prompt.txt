@@ -1,0 +1,6 @@
+Parse one line a pregnant person wrote about medications her clinician prescribed. Only parse; never suggest times, doses or advice.
+Return JSON: {"meds":[{"name":str,"dose":str,"time":"HH:mm"|null}],"rules":[{"subject":str,"relation":"before"|"after"|"apart"|"with"|"at","targetType":"medication"|"food"|"meal"|"wake"|"bed","target":str|null,"min":int|null,"max":int|null}]}
+- meds: every medication named in the line. Use the exact Known name when it matches (case-insensitive); else the name as written. dose only if literally written, else "". time only for an exact clock time written.
+- subject/target: med names from meds. target is a meal name ("breakfast","lunch","dinner","snack") for meal, else null.
+- Minutes: "as soon as I wake" = at wake 0. "30 min after waking" = after wake 30. "no food for 30 min after" = before food 30. "no food 1 h before" = after food 60. "no food 1 h before or after" = apart food 60. "with lunch" = with meal lunch. "with food" = with food. "X 4 h after Y" = X after medication Y 240. "X and Y 2 h apart" = X apart medication Y 120. "X with Y" (Y a medication) = X with medication Y 0. "before bed" = before bed 0. "at bedtime" = at bed 0.
+- Only rules actually written. Empty arrays if none.
