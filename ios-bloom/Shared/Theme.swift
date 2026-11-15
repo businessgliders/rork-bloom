@@ -11,6 +11,8 @@ enum Theme {
     // Text
     static let text = Color(light: 0x3A2C2A, dark: 0xF6ECE6)
     static let textSecondary = Color(light: 0x796963, dark: 0xB5A49D)
+    /// Small caption and time text on the Lock Screen and widgets (7:1 or better).
+    static let textCaption = Color(light: 0x5E4E49, dark: 0xD4C5BE)
 
     // Accents
     static let blush = Color(light: 0xE88C9B, dark: 0xF0A4AF)
@@ -52,6 +54,17 @@ extension Color {
         self.init(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
         })
+    }
+}
+
+extension Color {
+    /// This colour with its light or dark value picked now. Widgets and Live
+    /// Activities are archived before the system shows them, so they fix each
+    /// token to the colour scheme they were rendered in instead of relying on
+    /// a dynamic colour being resolved later.
+    func fixed(_ scheme: ColorScheme) -> Color {
+        let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
+        return Color(uiColor: UIColor(self).resolvedColor(with: traits))
     }
 }
 

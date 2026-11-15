@@ -26,12 +26,23 @@ struct WidgetCanvas: View {
 struct EmojiBlob: View {
     var emoji: String
     var size: CGFloat
-    var fill: Color = Theme.peachSoft
+    var style: AnyShapeStyle
     var seed: Int = 3
+
+    init(emoji: String, size: CGFloat, fill: Color = Theme.peachSoft, seed: Int = 3) {
+        self.init(emoji: emoji, size: size, style: AnyShapeStyle(fill), seed: seed)
+    }
+
+    init(emoji: String, size: CGFloat, style: AnyShapeStyle, seed: Int = 3) {
+        self.emoji = emoji
+        self.size = size
+        self.style = style
+        self.seed = seed
+    }
 
     var body: some View {
         ZStack {
-            BlobShape(seed: seed).fill(fill)
+            BlobShape(seed: seed).fill(style)
             Text(emoji).font(.system(size: size * 0.52))
         }
         .frame(width: size, height: size)

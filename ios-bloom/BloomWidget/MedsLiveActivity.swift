@@ -83,17 +83,56 @@ private struct ActivityModel {
     var accentSoft: Color { windowRunning && !doseDue ? Theme.coralSoft : (allCaughtUp || windowJustEnded ? Theme.sageSoft : Theme.blushSoft) }
 }
 
+/// Colours for the activity in the current rendering mode.
+///
+/// Full colour keeps Bloom's cream card with every Theme token fixed to the
+/// light or dark value for the current colour scheme, so the archived widget
+/// can't pick the wrong one. Accented and vibrant modes (tinted or clear Lock
+/// Screen styles, StandBy at night) use the system's primary and secondary
+/// styles instead, so the system tint stays readable over any wallpaper.
+private struct ActivityPalette {
+    let fullColor: Bool
+    let scheme: ColorScheme
+
+    init(mode: WidgetRenderingMode, scheme: ColorScheme) {
+        fullColor = mode == .fullColor
+        self.scheme = scheme
+    }
+
+    /// The Dynamic Island is always black, so its tokens use their dark values.
+    static func island(mode: WidgetRenderingMode) -> ActivityPalette {
+        ActivityPalette(mode: mode, scheme: .dark)
+    }
+
+    private func style(_ color: Color, else system: some ShapeStyle) -> AnyShapeStyle {
+        fullColor ? AnyShapeStyle(color.fixed(scheme)) : AnyShapeStyle(system)
+    }
+
+    func color(_ color: Color) -> Color? { fullColor ? color.fixed(scheme) : nil }
+
+    var card: Color? { color(Theme.canvas) }
+    var headline: AnyShapeStyle { style(Theme.text, else: .primary) }
+    /// Small caption and time text: the deepest secondary tone, primary when tinted.
+    var caption: AnyShapeStyle { style(Theme.textCaption, else: .primary) }
+    func accentText(_ color: Color) -> AnyShapeStyle { style(color, else: .primary) }
+    func blob(_ color: Color) -> AnyShapeStyle { style(color, else: .quaternary) }
+    /// Text on the black island.
+    func islandText(_ opacity: Double) -> AnyShapeStyle {
+        fullColor ? AnyShapeStyle(Color.white.opacity(opacity)) : AnyShapeStyle(opacity < 1 ? HierarchicalShapeStyle.secondary : .primary)
+    }
+}
+
 struct MedsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: BloomActivityAttributes.self) { context in
+            // The background tint and action colour are set inside the view, where
+            // the rendering mode and colour scheme can be read.
             LockScreenActivityView(model: ActivityModel(context: context))
-                .activityBackgroundTint(Theme.canvas)
-                .activitySystemActionForegroundColor(Theme.blushDeep)
         } dynamicIsland: { context in
             let model = ActivityModel(context: context)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    EmojiBlob(emoji: model.emoji, size: 44, fill: model.accent.opacity(0.35))
+                    IslandBlob(model: model)
                         .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
@@ -101,21 +140,10 @@ struct MedsLiveActivity: Widget {
                         .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        model.headlineText
-                            .font(.bloom(.headline, weight: .heavy))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Text(model.subline)
-                            .font(.bloom(.caption, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    IslandCenter(model: model)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    ActivityBottom(model: model, onDark: true)
+                    ActivityBottom(model: model, onIsland: true)
                         .padding(.top, 4)
                 }
             } compactLeading: {
@@ -123,19 +151,9 @@ struct MedsLiveActivity: Widget {
             } compactTrailing: {
                 CompactTrailing(model: model)
             } minimal: {
-                if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
-                    ProgressView(timerInterval: start...end, countsDown: true) {
-                        EmptyView()
-                    } currentValueLabel: {
-                        Text(model.emoji).font(.system(size: 11))
-                    }
-                    .progressViewStyle(.circular)
-                    .tint(Theme.coral)
-                } else {
-                    Text(model.emoji).font(.system(size: 14))
-                }
+                IslandMinimal(model: model)
             }
-            .keylineTint(model.accent)
+            .keylineTint(model.accent.fixed(.dark))
         }
     }
 }
@@ -144,130 +162,195 @@ struct MedsLiveActivity: Widget {
 
 private struct LockScreenActivityView: View {
     var model: ActivityModel
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: ActivityPalette { ActivityPalette(mode: renderingMode, scheme: colorScheme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                EmojiBlob(emoji: model.emoji, size: 50, fill: model.accentSoft)
+                EmojiBlob(emoji: model.emoji, size: 50, style: palette.blob(model.accentSoft))
                 VStack(alignment: .leading, spacing: 2) {
-                    WidgetCaption(text: "Bloom · \(model.state.resolved)/\(model.state.total) today", color: Theme.textSecondary)
+                    Text("Bloom · \(model.state.resolved)/\(model.state.total) today".uppercased())
+                        .font(.system(size: 12, weight: .heavy))
+                        .tracking(0.4)
+                        .foregroundStyle(palette.caption)
+                        .lineLimit(1)
+                        // Folded iPhone Duo is narrow: shrink a little before truncating.
+                        .minimumScaleFactor(0.8)
+                        .layoutPriority(1)
                     model.headlineText
                         .font(.bloom(.title3, weight: .heavy))
-                        .foregroundStyle(Theme.text)
+                        .foregroundStyle(palette.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(model.subline)
-                        .font(.bloom(.subheadline, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.bloom(.subheadline, weight: .semibold))
+                        .foregroundStyle(palette.caption)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                 }
                 Spacer(minLength: 4)
                 if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd, model.doseDue {
                     // Both a due dose and a running window: show the countdown here, the button below.
-                    Text(timerInterval: start...end, countsDown: true)
-                        .font(.system(size: 22, weight: .heavy))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.coralDeep)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(maxWidth: 96)
+                    timer(start...end, size: 22, color: Theme.coralDeep, maxWidth: 96)
                 } else if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
-                    Text(timerInterval: start...end, countsDown: true)
-                        .font(.system(size: 28, weight: .heavy))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.coralDeep)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(maxWidth: 112)
+                    timer(start...end, size: 28, color: Theme.coralDeep, maxWidth: 112)
                 } else if let dose = model.state.dose, !model.doseDue {
-                    Text(timerInterval: Date.now...max(Date.now, dose.scheduledAt), countsDown: true)
-                        .font(.system(size: 22, weight: .heavy))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.blushDeep)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(maxWidth: 96)
+                    timer(Date.now...max(Date.now, dose.scheduledAt), size: 22, color: Theme.blushDeep, maxWidth: 96)
                 }
             }
-            ActivityBottom(model: model, onDark: false)
+            ActivityBottom(model: model, onIsland: false)
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // An opaque cream card in full colour: the tint alone is blended with the
+        // wallpaper on newer Lock Screens, which washed the text out.
+        .background(palette.card ?? .clear)
+        .activityBackgroundTint(palette.card)
+        .activitySystemActionForegroundColor(palette.color(Theme.blushDeep))
+    }
+
+    private func timer(_ range: ClosedRange<Date>, size: CGFloat, color: Color, maxWidth: CGFloat) -> some View {
+        Text(timerInterval: range, countsDown: true)
+            .font(.system(size: size, weight: .heavy))
+            .monospacedDigit()
+            .foregroundStyle(palette.accentText(color))
+            .multilineTextAlignment(.trailing)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .frame(maxWidth: maxWidth)
+            .widgetAccentable()
     }
 }
 
 /// The Taken button when a dose is due, otherwise the window progress bar.
 private struct ActivityBottom: View {
     var model: ActivityModel
-    var onDark: Bool
+    var onIsland: Bool
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: ActivityPalette {
+        onIsland ? .island(mode: renderingMode) : ActivityPalette(mode: renderingMode, scheme: colorScheme)
+    }
+    private var smallText: AnyShapeStyle { onIsland ? palette.islandText(0.8) : palette.caption }
 
     var body: some View {
         if let dose = model.state.dose, model.doseDue {
             HStack(spacing: 10) {
                 Button(intent: MarkDoseTakenIntent(medID: dose.medID, scheduledAt: dose.scheduledAt)) {
-                    Label("Taken", systemImage: "checkmark")
-                        .font(.bloom(.headline, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Theme.roseButton, in: .capsule)
+                    takenLabel
                 }
                 .buttonStyle(.plain)
                 if model.state.otherDueCount > 0 {
                     Text("+\(model.state.otherDueCount) more due")
                         .font(.bloom(.caption, weight: .bold))
-                        .foregroundStyle(onDark ? .white.opacity(0.7) : Theme.textSecondary)
+                        .foregroundStyle(smallText)
                 }
             }
         } else if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(timerInterval: start...end, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
-                    .tint(Theme.coral)
+                    .tint(palette.color(Theme.coral))
                 if let reason = model.state.windowReason {
                     Text("Because of \(reason) · counted from when \(model.person ?? "you") took it")
-                        .font(.bloom(.caption2, weight: .medium))
-                        .foregroundStyle(onDark ? .white.opacity(0.6) : Theme.textSecondary)
+                        .font(.bloom(.caption, weight: .semibold))
+                        .foregroundStyle(smallText)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
             }
         } else if model.state.total > 0 {
             ProgressView(value: Double(model.state.resolved), total: Double(model.state.total))
-                .tint(Theme.sage)
+                .tint(palette.color(Theme.sage))
+        }
+    }
+
+    @ViewBuilder
+    private var takenLabel: some View {
+        let label = Label("Taken", systemImage: "checkmark")
+            .font(.bloom(.headline, weight: .heavy))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+        if palette.fullColor {
+            label
+                .foregroundStyle(.white)
+                .background(Theme.roseButton, in: .capsule)
+        } else {
+            // Tinted modes: an outlined capsule in the system tint, readable on any wallpaper.
+            label
+                .foregroundStyle(.primary)
+                .background(.quaternary, in: .capsule)
+                .overlay(Capsule().strokeBorder(.primary, lineWidth: 1.5))
+                .widgetAccentable()
         }
     }
 }
 
 // MARK: - Dynamic Island pieces
 
-private struct IslandTrailing: View {
+private struct IslandBlob: View {
     var model: ActivityModel
+    @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
+        let palette = ActivityPalette.island(mode: renderingMode)
+        EmojiBlob(emoji: model.emoji, size: 44,
+                  style: palette.fullColor ? AnyShapeStyle(model.accent.fixed(.dark).opacity(0.35)) : AnyShapeStyle(.quaternary))
+    }
+}
+
+private struct IslandCenter: View {
+    var model: ActivityModel
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    var body: some View {
+        let palette = ActivityPalette.island(mode: renderingMode)
+        VStack(alignment: .leading, spacing: 2) {
+            model.headlineText
+                .font(.bloom(.headline, weight: .heavy))
+                .foregroundStyle(palette.islandText(1))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(model.subline)
+                .font(.bloom(.caption, weight: .semibold))
+                .foregroundStyle(palette.islandText(0.85))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct IslandTrailing: View {
+    var model: ActivityModel
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    var body: some View {
+        let palette = ActivityPalette.island(mode: renderingMode)
         if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(timerInterval: start...end, countsDown: true)
                     .font(.system(size: 22, weight: .heavy))
                     .monospacedDigit()
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(palette.accentText(Theme.coral))
                     .multilineTextAlignment(.trailing)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .frame(maxWidth: 88)
                 Text("no food")
                     .font(.bloom(.caption2, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(palette.islandText(0.8))
             }
         } else {
             VStack(alignment: .trailing, spacing: 0) {
                 Text("\(model.state.resolved)/\(model.state.total)")
                     .font(.system(size: 22, weight: .heavy))
-                    .foregroundStyle(Theme.sage)
+                    .foregroundStyle(palette.accentText(Theme.sage))
                 Text("today")
                     .font(.bloom(.caption2, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(palette.islandText(0.8))
             }
         }
     }
@@ -275,13 +358,15 @@ private struct IslandTrailing: View {
 
 private struct CompactTrailing: View {
     var model: ActivityModel
+    @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
+        let palette = ActivityPalette.island(mode: renderingMode)
         if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             Text(timerInterval: start...end, countsDown: true)
                 .font(.system(size: 14, weight: .heavy))
                 .monospacedDigit()
-                .foregroundStyle(Theme.coral)
+                .foregroundStyle(palette.accentText(Theme.coral))
                 .multilineTextAlignment(.trailing)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -289,14 +374,33 @@ private struct CompactTrailing: View {
         } else if model.doseDue {
             Text("Due")
                 .font(.system(size: 14, weight: .heavy))
-                .foregroundStyle(Theme.blush)
+                .foregroundStyle(palette.accentText(Theme.blush))
         } else if let dose = model.state.dose {
             Text(dose.scheduledAt, style: .time)
                 .font(.system(size: 13, weight: .heavy))
-                .foregroundStyle(Theme.blush)
+                .foregroundStyle(palette.accentText(Theme.blush))
                 .frame(maxWidth: 56)
         } else {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.sage)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.accentText(Theme.sage))
+        }
+    }
+}
+
+private struct IslandMinimal: View {
+    var model: ActivityModel
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    var body: some View {
+        if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
+            ProgressView(timerInterval: start...end, countsDown: true) {
+                EmptyView()
+            } currentValueLabel: {
+                Text(model.emoji).font(.system(size: 11))
+            }
+            .progressViewStyle(.circular)
+            .tint(ActivityPalette.island(mode: renderingMode).color(Theme.coral))
+        } else {
+            Text(model.emoji).font(.system(size: 14))
         }
     }
 }
