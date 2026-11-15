@@ -188,7 +188,7 @@ struct MedsTodayList: View {
 
     /// The time a dose's label shows while the wheel spins or a change is pending, when it differs from now.
     private func previewMinutes(_ instance: DoseInstance) -> Int? {
-        guard let shown = previewInstances.first(where: { $0.id == instance.id }),
+        guard let shown = previewInstances.first(where: { $0.medication.id == instance.medication.id }),
               shown.anchor != instance.anchor else { return nil }
         return minutes(shown.anchor)
     }
