@@ -1,10 +1,14 @@
 import SwiftUI
 
-/// One person's routines on one screen. Tap a routine to open it in place: name, days, wake, meals,
-/// bedtime and medication times. Changing a time re-plans the routine and asks inline:
-/// "Just today" / "Going forward" / "Undo". No two routines share a day.
+/// Meds & routines: one place for everything Bloom plans. First the medications (tap to edit,
+/// swipe to pause or delete, add with the one-box entry) and their rules, then the routines.
+/// Tap a routine to open it in place: name, days, wake, meals, bedtime and medication times.
+/// Changing a time re-plans the routine and asks inline: "Just today" / "Going forward" / "Undo".
+/// No two routines share a day.
 struct TemplatesView: View {
     var owner: MedOwner
+    /// Opens the medication editor.
+    var onEdit: (Medication) -> Void = { _ in }
 
     @Environment(AppStore.self) private var store
     @State private var expanded: UUID?
@@ -13,6 +17,7 @@ struct TemplatesView: View {
     @State private var pendingDelete: ScheduleTemplate?
     @State private var pendingMove: DayMove?
     @State private var names: [UUID: String] = [:]
+    @State private var pendingMedDelete: Medication?
 
     private struct DayMove: Identifiable {
         var day: Int
@@ -27,8 +32,27 @@ struct TemplatesView: View {
     private var rules: [ScheduleRule] { store.rules(for: owner) }
     private var todayID: UUID? { store.activeTemplate(for: owner, on: store.now)?.id }
 
+    /// Shared: this person's medications. One phone: everyone's (the who-takes picker can add the partner's).
+    private var allMeds: [Medication] {
+        store.sortedMedications.filter { !store.isShared || $0.owner == owner }
+            .enumerated()
+            .sorted { a, b in
+                let ta = regularTime(a.element), tb = regularTime(b.element)
+                if ta != tb { return (ta ?? DoseTime(hour: 23, minute: 59)) < (tb ?? DoseTime(hour: 23, minute: 59)) }
+                return a.offset < b.offset
+            }
+            .map(\.element)
+    }
+
+    /// The time a medication follows in its routine today, before any "Just today" change.
+    private func regularTime(_ med: Medication) -> DoseTime? {
+        guard med.managed else { return med.times.min() }
+        return store.activeTemplate(for: med.owner, on: store.now)?.dose(for: med.id)?.time ?? med.plannedTimes(on: store.now).first
+    }
+
     var body: some View {
         List {
+            medicationsSection
             if templates.isEmpty {
                 Section {
                     Text("No routine yet. Tell Bloom when you wake, eat and sleep, and it places every dose around your day.")
@@ -39,11 +63,13 @@ struct TemplatesView: View {
                     }
                     .tint(Theme.blushDeep)
                     .accessibilityIdentifier("templates-new")
+                } header: {
+                    sectionHeader("Routines")
                 }
             }
 
-            ForEach(templates) { t in
-                routineSection(t)
+            ForEach(Array(templates.enumerated()), id: \.element.id) { index, t in
+                routineSection(t, isFirst: index == 0)
             }
 
             if let source = templates.first(where: { $0.id == expanded }) ?? templates.first(where: { $0.id == todayID }) ?? templates.first {
@@ -62,35 +88,11 @@ struct TemplatesView: View {
                 .font(.bloom(.body, weight: .semibold))
             }
 
-            Section {
-                if meds.isEmpty {
-                    Text("No medications in the routine yet.")
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    ForEach(meds) { med in
-                        Text(med.shortName)
-                            .font(.bloom(.body, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                    }
-                }
-                ForEach(rules) { rule in
-                    Text(store.describe(rule))
-                        .font(.bloom(.subheadline))
-                        .foregroundStyle(rule.isNoFood ? Theme.coralDeep : Theme.textSecondary)
-                }
-                Button { Haptics.tap(); showBox = true } label: {
-                    Label("Edit medications & rules", systemImage: "text.badge.checkmark")
-                        .font(.bloom(.body, weight: .semibold))
-                }
-                .tint(Theme.blushDeep)
-                .disabled(templates.isEmpty)
-                .accessibilityIdentifier("templates-edit-meds")
-            } header: {
-                Text("Medications & rules")
-            }
         }
         .duoListClearance()
-        .navigationTitle(store.isShared && owner != store.viewerRole ? "\(store.name(for: owner))'s routines" : "Routines")
+        .scrollContentBackground(.hidden)
+        .background(BloomBackground())
+        .navigationTitle(store.isShared && owner != store.viewerRole ? "\(store.name(for: owner))'s meds & routines" : "Meds & routines")
         .navigationBarTitleDisplayMode(.inline)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: expanded)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: store.scheduleChange?.id)
@@ -111,6 +113,18 @@ struct TemplatesView: View {
         }
         .sheet(isPresented: $showBox) {
             MedsBoxView(owner: owner, onClose: { showBox = false })
+        }
+        .confirmationDialog("Delete \(pendingMedDelete?.shortName ?? "")?",
+                            isPresented: Binding(get: { pendingMedDelete != nil }, set: { if !$0 { pendingMedDelete = nil } }),
+                            titleVisibility: .visible) {
+            Button("Delete medication and history", role: .destructive) {
+                if let pendingMedDelete { store.deleteMedication(pendingMedDelete) }
+                Haptics.warning()
+                pendingMedDelete = nil
+            }
+            .accessibilityIdentifier("med-delete-confirm")
+        } message: {
+            Text("This removes the medication and every dose logged for it. To keep the history, pause it instead.")
         }
         .confirmationDialog("Delete the \(pendingDelete?.displayName ?? "") routine?",
                             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -143,6 +157,125 @@ struct TemplatesView: View {
 
     private func dayName(_ day: Int) -> String { PregnancyMath.calendar.weekdaySymbols[day] }
 
+    // MARK: Medications
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.bloom(.title3, weight: .heavy))
+            .foregroundStyle(Theme.text)
+            .textCase(nil)
+            .padding(.leading, -4)
+    }
+
+    private var medicationsSection: some View {
+        let today = PregnancyMath.calendar.startOfDay(for: store.now)
+        let current = allMeds.filter { ($0.endDate ?? .distantFuture) >= today }
+        let paused = allMeds.filter { ($0.endDate ?? .distantFuture) < today }
+        return Group {
+            Section {
+                if current.isEmpty {
+                    Text("No medications yet.")
+                        .font(.bloom(.body))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                ForEach(current) { med in medRow(med, paused: false) }
+                ForEach(rules) { rule in
+                    Label {
+                        Text(store.describe(rule))
+                            .font(.bloom(.subheadline))
+                            .foregroundStyle(rule.isNoFood ? Theme.coralDeep : Theme.textSecondary)
+                    } icon: {
+                        Image(systemName: rule.isNoFood ? "fork.knife" : "arrow.left.and.right")
+                            .foregroundStyle(rule.isNoFood ? Theme.coralDeep : Theme.textSecondary)
+                    }
+                }
+                Button {
+                    Haptics.tap()
+                    if templates.isEmpty { showQuiz = true } else { showBox = true }
+                } label: {
+                    Label(current.isEmpty ? "Add medications" : "Add or change medications & rules", systemImage: "plus.circle.fill")
+                        .font(.bloom(.body, weight: .semibold))
+                }
+                .tint(Theme.blushDeep)
+                .accessibilityIdentifier("templates-edit-meds")
+            } header: {
+                sectionHeader("Medications")
+            } footer: {
+                Text("Tap one to edit it. Swipe to pause or delete.")
+                    .font(.bloom(.caption))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if !paused.isEmpty {
+                Section("Paused") {
+                    ForEach(paused) { med in medRow(med, paused: true) }
+                }
+            }
+        }
+    }
+
+    private func timesLine(_ med: Medication) -> String {
+        let clock: (DoseTime) -> String = { $0.date(on: .now).formatted(date: .omitted, time: .shortened) }
+        if med.managed {
+            // The routine's own time; a "Just today" change is noted, not shown as the regular time.
+            let today = med.plannedTimes(on: store.now).first
+            guard let regular = regularTime(med) else {
+                return "In your routine"
+            }
+            if let today, today != regular { return "\(clock(regular)) · today \(clock(today))" }
+            return clock(regular)
+        }
+        return "\(med.schedule.summary) · \(med.times.sorted().map(clock).joined(separator: ", "))"
+    }
+
+    private func medRow(_ med: Medication, paused: Bool) -> some View {
+        Button { onEdit(med) } label: {
+            HStack(spacing: 12) {
+                MedBadge(medication: med, size: 40, fill: paused ? Theme.surfaceMuted : Theme.blushSoft)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(med.displayTitle)
+                        .font(.bloom(.headline, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .multilineTextAlignment(.leading)
+                    Text(paused ? "Paused" : timesLine(med))
+                        .font(.bloom(.subheadline))
+                        .foregroundStyle(Theme.textSecondary)
+                        .monospacedDigit()
+                    if !paused {
+                        Text(store.isShared ? med.foodSummary : "\(store.name(for: med.owner)) · \(med.foodSummary)")
+                            .font(.bloom(.footnote, weight: .semibold))
+                            .foregroundStyle(med.foodRule == .emptyStomach ? Theme.coralDeep : Theme.textSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("med-row-\(med.shortName)")
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) { pendingMedDelete = med } label: { Label("Delete", systemImage: "trash") }
+            if paused {
+                Button { Haptics.success(); store.resumeMedication(med) } label: { Label("Resume", systemImage: "play.fill") }
+                    .tint(Theme.sageButton)
+            } else {
+                Button { Haptics.tap(); store.stopMedication(med) } label: { Label("Pause", systemImage: "pause.fill") }
+                    .tint(Theme.peachButton)
+            }
+        }
+        .contextMenu {
+            Button { onEdit(med) } label: { Label("Edit", systemImage: "pencil") }
+            if paused {
+                Button { store.resumeMedication(med) } label: { Label("Resume", systemImage: "play.fill") }
+            } else {
+                Button { store.stopMedication(med) } label: { Label("Pause", systemImage: "pause.fill") }
+            }
+            Button(role: .destructive) { pendingMedDelete = med } label: { Label("Delete", systemImage: "trash") }
+        }
+    }
+
     // MARK: A routine
 
     /// The routine as it would be with the pending change, so pickers show what she just chose.
@@ -155,7 +288,7 @@ struct TemplatesView: View {
     }
 
     @ViewBuilder
-    private func routineSection(_ t: ScheduleTemplate) -> some View {
+    private func routineSection(_ t: ScheduleTemplate, isFirst: Bool) -> some View {
         let isOpen = expanded == t.id
         let (draft, change) = shown(t)
         let broken = change == nil ? store.violations(in: t) : []
@@ -228,6 +361,8 @@ struct TemplatesView: View {
                 }
                 .font(.bloom(.subheadline, weight: .semibold))
             }
+        } header: {
+            if isFirst { sectionHeader("Routines") }
         }
     }
 
@@ -350,7 +485,7 @@ struct DayChips: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 36)
                         .foregroundStyle(on ? .white : Theme.blushDeep)
-                        .background(on ? Theme.blush : Theme.blushSoft, in: .circle)
+                        .background(on ? Theme.roseButton : Theme.blushSoft, in: .circle)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(PregnancyMath.calendar.weekdaySymbols[day])

@@ -150,6 +150,8 @@ struct RemoteState {
     var rules: [RemoteRuleRow] = []
     /// "Just today" rows (`planned_doses.source = override`) from yesterday on.
     var overrideDoses: [RemotePlannedDoseRow] = []
+    /// "Just today" wake, bed and meals (`day_routines`) from yesterday on.
+    var dayRoutines: [RemoteDayRoutineRow] = []
 }
 
 /// Lets the user reverse the last dose action from a toast.

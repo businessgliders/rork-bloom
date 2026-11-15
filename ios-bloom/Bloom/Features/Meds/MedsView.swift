@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum MedsRoute: Hashable {
-    case manage
+    /// Meds & routines: medications, rules and routines in one place.
     case schedule(MedOwner)
 }
 
@@ -14,8 +14,6 @@ struct MedsView: View {
     @State private var showEditor = false
     @State private var editingMedication: Medication?
     @State private var editorToken = UUID()
-    /// A row is being dragged: the list stops scrolling.
-    @State private var rowDragging = false
     /// Whose meds are on screen when shared (nil = the default for this viewer).
     @State private var personChoice: MedOwner?
     @State private var showQuiz = false
@@ -78,16 +76,9 @@ struct MedsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink(value: MedsRoute.manage) {
-                        Label("Medications", systemImage: "list.bullet")
-                    }
-                    .tint(Theme.textSecondary)
-                    .disabled(store.medications.isEmpty)
-                }
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink(value: MedsRoute.schedule(owner)) {
-                        Label("Routines", systemImage: "calendar.day.timeline.left")
+                        Label("Meds & routines", systemImage: "list.bullet.rectangle")
                     }
                     .tint(Theme.textSecondary)
                     .accessibilityIdentifier("meds-schedule")
@@ -104,10 +95,8 @@ struct MedsView: View {
             }
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
-                case .manage:
-                    ManageMedsView(onEdit: { openEditor($0) }, onAdd: { startAdd() })
                 case .schedule(let who):
-                    TemplatesView(owner: who)
+                    TemplatesView(owner: who, onEdit: { openEditor($0) })
                 }
             }
         }
@@ -191,7 +180,6 @@ struct MedsView: View {
                 .frame(maxWidth: 560)
                 .frame(maxWidth: .infinity)
             }
-            .scrollDisabled(rowDragging)
         } secondary: {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -205,7 +193,6 @@ struct MedsView: View {
                     .frame(maxWidth: 560)
                     .frame(maxWidth: .infinity)
                 }
-                .scrollDisabled(rowDragging)
                 .modifier(RevealRowPanel(proxy: proxy))
             }
         } compact: {
@@ -227,14 +214,9 @@ struct MedsView: View {
                 .frame(maxWidth: 640)
                 .frame(maxWidth: .infinity)
             }
-            .scrollDisabled(rowDragging)
             .modifier(RevealRowPanel(proxy: proxy))
             }
             .background(BloomBackground())
-        }
-        .onChange(of: store.scheduleChange?.id) { _, id in
-            // A panel only appears once a drag or edit has finished.
-            if id != nil { rowDragging = false }
         }
     }
 
@@ -273,7 +255,7 @@ struct MedsView: View {
                 Button {
                     path.append(MedsRoute.schedule(owner))
                 } label: {
-                    Label("Edit routines", systemImage: "slider.horizontal.3")
+                    Label("Meds & routines", systemImage: "slider.horizontal.3")
                 }
             } label: {
                 HStack(spacing: 4) {
@@ -300,8 +282,7 @@ struct MedsView: View {
             owner: owner,
             canLog: !isFuture,
             now: isToday ? store.now : nil,
-            actions: doseActions,
-            onDragging: { rowDragging = $0 }
+            actions: doseActions
         )
     }
 
@@ -460,7 +441,7 @@ private struct UndoToastView: View {
             Spacer(minLength: 4)
             Button("Undo", action: onUndo)
                 .font(.bloom(.subheadline, weight: .heavy))
-                .foregroundStyle(Theme.blush)
+                .foregroundStyle(Theme.toastAccent)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)

@@ -166,7 +166,7 @@ private struct LockScreenActivityView: View {
                 if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd, model.doseDue {
                     // Both a due dose and a running window: show the countdown here, the button below.
                     Text(timerInterval: start...end, countsDown: true)
-                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .font(.system(size: 22, weight: .heavy))
                         .monospacedDigit()
                         .foregroundStyle(Theme.coralDeep)
                         .multilineTextAlignment(.trailing)
@@ -175,7 +175,7 @@ private struct LockScreenActivityView: View {
                         .frame(maxWidth: 96)
                 } else if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
                     Text(timerInterval: start...end, countsDown: true)
-                        .font(.system(size: 28, weight: .heavy, design: .rounded))
+                        .font(.system(size: 28, weight: .heavy))
                         .monospacedDigit()
                         .foregroundStyle(Theme.coralDeep)
                         .multilineTextAlignment(.trailing)
@@ -184,7 +184,7 @@ private struct LockScreenActivityView: View {
                         .frame(maxWidth: 112)
                 } else if let dose = model.state.dose, !model.doseDue {
                     Text(timerInterval: Date.now...max(Date.now, dose.scheduledAt), countsDown: true)
-                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .font(.system(size: 22, weight: .heavy))
                         .monospacedDigit()
                         .foregroundStyle(Theme.blushDeep)
                         .multilineTextAlignment(.trailing)
@@ -213,7 +213,7 @@ private struct ActivityBottom: View {
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(Theme.blush, in: .capsule)
+                        .background(Theme.roseButton, in: .capsule)
                 }
                 .buttonStyle(.plain)
                 if model.state.otherDueCount > 0 {
@@ -249,7 +249,7 @@ private struct IslandTrailing: View {
         if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(timerInterval: start...end, countsDown: true)
-                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .font(.system(size: 22, weight: .heavy))
                     .monospacedDigit()
                     .foregroundStyle(Theme.coral)
                     .multilineTextAlignment(.trailing)
@@ -263,7 +263,7 @@ private struct IslandTrailing: View {
         } else {
             VStack(alignment: .trailing, spacing: 0) {
                 Text("\(model.state.resolved)/\(model.state.total)")
-                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .font(.system(size: 22, weight: .heavy))
                     .foregroundStyle(Theme.sage)
                 Text("today")
                     .font(.bloom(.caption2, weight: .bold))
@@ -279,7 +279,7 @@ private struct CompactTrailing: View {
     var body: some View {
         if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             Text(timerInterval: start...end, countsDown: true)
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .font(.system(size: 14, weight: .heavy))
                 .monospacedDigit()
                 .foregroundStyle(Theme.coral)
                 .multilineTextAlignment(.trailing)
@@ -288,11 +288,11 @@ private struct CompactTrailing: View {
                 .frame(maxWidth: 56)
         } else if model.doseDue {
             Text("Due")
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .font(.system(size: 14, weight: .heavy))
                 .foregroundStyle(Theme.blush)
         } else if let dose = model.state.dose {
             Text(dose.scheduledAt, style: .time)
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.system(size: 13, weight: .heavy))
                 .foregroundStyle(Theme.blush)
                 .frame(maxWidth: 56)
         } else {

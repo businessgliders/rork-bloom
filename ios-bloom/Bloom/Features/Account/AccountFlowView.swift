@@ -400,7 +400,7 @@ struct SetupView: View {
     private var joinPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             TextField("ABC123", text: $code)
-                .font(.system(size: 38, weight: .heavy, design: .rounded))
+                .font(.system(size: 38, weight: .heavy))
                 .tracking(8)
                 .multilineTextAlignment(.center)
                 .textInputAutocapitalization(.characters)
@@ -580,7 +580,7 @@ struct InviteCodeCard: View {
     var body: some View {
         VStack(spacing: 14) {
             Text(code)
-                .font(.system(size: 40, weight: .heavy, design: .rounded))
+                .font(.system(size: 40, weight: .heavy))
                 .tracking(8)
                 .foregroundStyle(Theme.blushDeep)
                 .textSelection(.enabled)

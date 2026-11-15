@@ -45,7 +45,7 @@ struct WidgetCaption: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .font(.system(size: 11, weight: .heavy))
             .tracking(0.6)
             .foregroundStyle(color)
             .lineLimit(1)
@@ -64,7 +64,7 @@ struct WidgetChip: View {
             if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .bold)) }
             Text(text).lineLimit(1)
         }
-        .font(.system(size: 12, weight: .bold, design: .rounded))
+        .font(.system(size: 12, weight: .bold))
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

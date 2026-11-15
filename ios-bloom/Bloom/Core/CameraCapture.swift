@@ -130,7 +130,7 @@ struct CameraCaptureView: View {
                 .opacity(0.8)
             if let action {
                 Button(action.0, action: action.1)
-                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
+                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                     .frame(maxWidth: 240)
             }
         }

@@ -10,27 +10,36 @@ enum Theme {
 
     // Text
     static let text = Color(light: 0x3A2C2A, dark: 0xF6ECE6)
-    static let textSecondary = Color(light: 0x9A8A84, dark: 0xB5A49D)
+    static let textSecondary = Color(light: 0x796963, dark: 0xB5A49D)
 
     // Accents
-    static let blush = Color(light: 0xEE9AA6, dark: 0xF0A4AF)
+    static let blush = Color(light: 0xE88C9B, dark: 0xF0A4AF)
     static let peach = Color(light: 0xF6B892, dark: 0xF4BE9C)
-    static let sage = Color(light: 0x9DBF9E, dark: 0xA3C6A4)
-    static let coral = Color(light: 0xF08A7E, dark: 0xF2968B)
+    static let sage = Color(light: 0x86B488, dark: 0x92C094)
+    static let coral = Color(light: 0xEE7A6C, dark: 0xF28779)
     static let butter = Color(light: 0xF5D98B, dark: 0xF2D88F)
 
     // Deeper accents for text / icons on soft tints (contrast)
-    static let blushDeep = Color(light: 0xD4677A, dark: 0xF4AEB8)
-    static let sageDeep = Color(light: 0x5C8C60, dark: 0xB4D6B5)
-    static let coralDeep = Color(light: 0xD45F4F, dark: 0xF7A99F)
-    static let peachDeep = Color(light: 0xD98450, dark: 0xF7C8A8)
+    static let blushDeep = Color(light: 0xB63D52, dark: 0xF4AEB8)
+    static let sageDeep = Color(light: 0x3C6F40, dark: 0xB4D6B5)
+    static let coralDeep = Color(light: 0xA7392A, dark: 0xF7A99F)
+    static let peachDeep = Color(light: 0xA35729, dark: 0xF7C8A8)
 
     // Soft tints
     static let blushSoft = Color(light: 0xFBE3E4, dark: 0x4A2E31)
     static let peachSoft = Color(light: 0xFDEBDD, dark: 0x4A3428)
-    static let sageSoft = Color(light: 0xDDEEDB, dark: 0x2F3D2F)
-    static let coralSoft = Color(light: 0xFBDCD6, dark: 0x4C2C28)
+    static let sageSoft = Color(light: 0xD3EBD0, dark: 0x2F4530)
+    static let coralSoft = Color(light: 0xFAD2CA, dark: 0x552E29)
     static let butterSoft = Color(light: 0xFCF1D2, dark: 0x463D26)
+
+    // Filled buttons with white text (4.5:1 or better in both modes)
+    static let roseButton = Color(light: 0xC44E5E, dark: 0xC44E5E)
+    static let peachButton = Color(light: 0xB25F2C, dark: 0xB25F2C)
+    static let sageButton = Color(light: 0x468348, dark: 0x468348)
+    static let coralButton = Color(light: 0xCD4838, dark: 0xCD4838)
+
+    /// Rose accent on the dark undo toast (Theme.text capsule).
+    static let toastAccent = Color(light: 0xF4AEB8, dark: 0xA33246)
 
     static let ringTrack = Color(light: 0xF1E5DA, dark: 0x3B2F2C)
 
@@ -58,9 +67,9 @@ extension UIColor {
 }
 
 extension Font {
-    /// Large rounded type used across Bloom.
+    /// Bloom's type: regular SF Pro at the system text styles.
     static func bloom(_ style: Font.TextStyle, weight: Font.Weight = .regular) -> Font {
-        .system(style, design: .rounded, weight: weight)
+        .system(style, weight: weight)
     }
 }
 
@@ -88,7 +97,7 @@ extension View {
 // MARK: - Buttons
 
 struct BloomPrimaryButtonStyle: ButtonStyle {
-    var tint: Color = Theme.blush
+    var tint: Color = Theme.roseButton
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {

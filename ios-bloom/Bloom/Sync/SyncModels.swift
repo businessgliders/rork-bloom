@@ -192,6 +192,24 @@ nonisolated struct RemotePlannedDoseRow: Decodable {
     var template_id: UUID?
 }
 
+/// `day_routines`: one person's own wake, bed and meals for one day ("Just today").
+nonisolated struct RemoteDayRoutineRow: Decodable {
+    struct Meal: Codable {
+        var id: UUID
+        var name: String
+        var time: String
+        var duration_min: Int?
+    }
+
+    var id: UUID
+    var taker_id: UUID
+    var local_date: String
+    var template_id: UUID?
+    var wake_time: String?
+    var bed_time: String?
+    var meals: [Meal]?
+}
+
 // MARK: - Formatting helpers
 
 nonisolated enum SyncFormat {

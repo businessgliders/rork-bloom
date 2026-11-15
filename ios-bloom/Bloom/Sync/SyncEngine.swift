@@ -295,7 +295,7 @@ final class SyncEngine {
         let ch = Backend.client.channel("bloom-\(pregnancyID.uuidString.lowercased())")
         // Unfiltered: delete events can't be filtered and only carry the primary key. RLS limits rows to this pregnancy.
         for table in ["pregnancies", "pregnancy_members", "milestones", "medications", "dose_logs", "medication_follows",
-                      "schedule_templates", "template_items", "schedule_rules", "planned_doses"] {
+                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines"] {
             let stream = ch.postgresChange(AnyAction.self, schema: "public", table: table)
             realtimeTasks.append(Task {
                 for await _ in stream { SyncEngine.shared.requestPull() }
@@ -380,10 +380,15 @@ final class SyncEngine {
             .select("id, taker_id, medication_id, local_date, scheduled_for, source, template_id")
             .eq("pregnancy_id", value: pid).eq("source", value: "override")
             .gte("local_date", value: SyncFormat.day(PregnancyMath.addDays(-1, to: .now))).execute().value
+        async let dayRoutines: [RemoteDayRoutineRow] = client.from("day_routines")
+            .select("id, taker_id, local_date, template_id, wake_time, bed_time, meals")
+            .eq("pregnancy_id", value: pid)
+            .gte("local_date", value: SyncFormat.day(PregnancyMath.addDays(-1, to: .now))).execute().value
         let remote = try await RemoteState(
             pregnancy: pregnancy, members: members, milestones: milestones, medications: meds,
             follows: follows, doses: doses, doseWindowStart: windowStart,
-            templates: templates, templateItems: items, rules: rules, overrideDoses: overrides
+            templates: templates, templateItems: items, rules: rules, overrideDoses: overrides,
+            dayRoutines: dayRoutines
         )
         // A partner who just joined makes queued partner meds sendable.
         let hadPartner = store.account?.partnerJoined ?? false
@@ -677,6 +682,49 @@ final class SyncEngine {
             .eq("pregnancy_id", value: pid).eq("taker_id", value: takerID)
             .gte("local_date", value: SyncFormat.day(today))
             .lte("local_date", value: SyncFormat.day(days.last ?? today))
+        if !keep.isEmpty { delete = delete.not("id", operator: .in, value: "(\(keep.joined(separator: ",")))") }
+        try await delete.execute()
+        try await pushDayRoutines(owner, takerID: takerID, pid: pid, days: days)
+    }
+
+    /// "Just today" wake, bed and meal changes for the same days, so the other phone shows them too.
+    private func pushDayRoutines(_ owner: MedOwner, takerID: UUID, pid: UUID, days: [Date]) async throws {
+        let client = Backend.client
+        let cal = PregnancyMath.calendar
+        var rows: [[String: AnyJSON]] = []
+        for day in days {
+            guard let o = store.overrides.first(where: { $0.owner == owner && cal.isDate($0.date, inSameDayAs: day) }),
+                  o.meals != nil || o.wake != nil || o.bed != nil else { continue }
+            let meals: AnyJSON = o.meals.map { list in
+                .array(list.map { meal in
+                    .object([
+                        "id": .string(meal.id.uuidString.lowercased()),
+                        "name": .string(meal.name),
+                        "time": .string(String(format: "%02d:%02d", meal.time.hour, meal.time.minute)),
+                        "duration_min": .integer(meal.durationMinutes),
+                    ])
+                })
+            } ?? .null
+            rows.append([
+                "pregnancy_id": .string(pid.uuidString),
+                "taker_id": .string(takerID.uuidString),
+                "local_date": .string(SyncFormat.day(day)),
+                "template_id": o.templateID.map { .string($0.uuidString) } ?? .null,
+                "wake_time": o.wake.map { .string(SyncFormat.time($0)) } ?? .null,
+                "bed_time": o.bed.map { .string(SyncFormat.time($0)) } ?? .null,
+                "meals": meals,
+            ])
+        }
+        var keep: [String] = []
+        if !rows.isEmpty {
+            let saved: [RemoteIDRow] = try await client.from("day_routines")
+                .upsert(rows, onConflict: "pregnancy_id,taker_id,local_date").select("id").execute().value
+            keep = saved.map { $0.id.uuidString.lowercased() }
+        }
+        var delete = client.from("day_routines").delete()
+            .eq("pregnancy_id", value: pid).eq("taker_id", value: takerID)
+            .gte("local_date", value: SyncFormat.day(days.first ?? .now))
+            .lte("local_date", value: SyncFormat.day(days.last ?? .now))
         if !keep.isEmpty { delete = delete.not("id", operator: .in, value: "(\(keep.joined(separator: ",")))") }
         try await delete.execute()
     }

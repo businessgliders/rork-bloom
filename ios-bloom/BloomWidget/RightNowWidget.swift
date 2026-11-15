@@ -200,7 +200,7 @@ private struct DueBlock: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
-                    .background(Theme.blush, in: .capsule)
+                    .background(Theme.roseButton, in: .capsule)
             }
             .buttonStyle(.plain)
         }
@@ -217,7 +217,7 @@ private struct NoFoodBlock: View {
                 .font(.bloom(.subheadline, weight: .heavy))
                 .foregroundStyle(Theme.coralDeep)
             Text(timerInterval: min(now, window.end)...window.end, countsDown: true)
-                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .font(.system(size: 30, weight: .heavy))
                 .monospacedDigit()
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)

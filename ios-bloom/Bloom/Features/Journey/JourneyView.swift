@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// Journey: only the baby. Week and days, the ring with the size comparison, the due date
+/// and This week (Baby / Mom / Partner). The milestone timeline has its own tab.
+/// Open iPhone Duo (wide): the ring, centred and large, on the left; This week scrolls on its own
+/// on the right. Folded Duo and regular iPhones: one column, ring first.
 struct JourneyView: View {
     @Environment(AppStore.self) private var store
 
@@ -8,7 +12,6 @@ struct JourneyView: View {
     @State private var showDates = false
     @State private var showSettings = false
     @State private var detailWeek: WeekSheetItem?
-    @State private var editingMilestone: MilestoneEditorItem?
 
     var body: some View {
         NavigationStack {
@@ -16,27 +19,27 @@ struct JourneyView: View {
                 let age = profile.progress(on: store.now)
                 let weekNumber = browseWeek ?? age.contentWeek
                 AdaptiveColumns {
-                    // Wide, left pane: progress ring + This week.
+                    // Wide, left pane: the ring, as large as the pane allows, centred.
+                    hero(profile: profile, age: age, weekNumber: weekNumber, expanded: true)
+                        .padding(.horizontal, 40)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } secondary: {
+                    // Wide, right pane: This week, scrolling on its own.
                     ScrollView {
-                        weekSection(profile: profile, age: age, weekNumber: weekNumber)
+                        thisWeek(profile: profile, weekNumber: weekNumber)
                             .padding(.horizontal, 24)
-                            .padding(.bottom, 32)
+                            .padding(.vertical, 16)
                             .frame(maxWidth: 560)
                             .frame(maxWidth: .infinity)
                     }
-                } secondary: {
-                    // Wide, right pane: the full timeline.
-                    TimelinePane()
+                    .accessibilityIdentifier("journey-this-week-pane")
                 } compact: {
                     // Regular iPhones, Duo outer display, tall inner display.
                     ScrollView {
                         VStack(spacing: 28) {
-                            weekSection(profile: profile, age: age, weekNumber: weekNumber)
-                            TimelineStrip(
-                                milestones: store.sortedMilestones,
-                                onSelect: { editingMilestone = MilestoneEditorItem(milestone: $0) },
-                                onAdd: { editingMilestone = MilestoneEditorItem(milestone: nil) }
-                            )
+                            hero(profile: profile, age: age, weekNumber: weekNumber, expanded: false)
+                            thisWeek(profile: profile, weekNumber: weekNumber)
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 32)
@@ -56,9 +59,6 @@ struct JourneyView: View {
                     }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
-                .navigationDestination(for: TimelineRoute.self) { _ in
-                    FullTimelineView()
-                }
                 .sheet(isPresented: $showDates) {
                     NavigationStack { EditDatesView() }
                 }
@@ -68,34 +68,30 @@ struct JourneyView: View {
                 .sheet(item: $detailWeek) { item in
                     WeekDetailSheet(week: item.week, profile: profile)
                 }
-                .sheet(item: $editingMilestone) { item in
-                    MilestoneEditorView(milestone: item.milestone)
-                }
             }
         }
     }
 
-    @ViewBuilder
-    private func weekSection(profile: PregnancyProfile, age: GestationalAge, weekNumber: Int) -> some View {
-        VStack(spacing: 28) {
-            WeekHeroView(
-                profile: profile,
-                age: age,
-                browseWeek: $browseWeek,
-                onEditDates: { showDates = true },
-                onOpenWeek: { detailWeek = WeekSheetItem(week: weekNumber) }
-            )
+    private func hero(profile: PregnancyProfile, age: GestationalAge, weekNumber: Int, expanded: Bool) -> some View {
+        WeekHeroView(
+            profile: profile,
+            age: age,
+            browseWeek: $browseWeek,
+            expanded: expanded,
+            onEditDates: { showDates = true },
+            onOpenWeek: { detailWeek = WeekSheetItem(week: weekNumber) }
+        )
+    }
 
-            if let content = WeekLibrary.week(weekNumber) {
-                ThisWeekCard(content: content, profile: profile, isCurrent: browseWeek == nil) {
-                    detailWeek = WeekSheetItem(week: weekNumber)
-                }
+    @ViewBuilder
+    private func thisWeek(profile: PregnancyProfile, weekNumber: Int) -> some View {
+        if let content = WeekLibrary.week(weekNumber) {
+            ThisWeekCard(content: content, profile: profile, isCurrent: browseWeek == nil) {
+                detailWeek = WeekSheetItem(week: weekNumber)
             }
         }
     }
 }
-
-struct TimelineRoute: Hashable {}
 
 struct WeekSheetItem: Identifiable {
     let week: Int
@@ -113,10 +109,11 @@ struct WeekHeroView: View {
     var profile: PregnancyProfile
     var age: GestationalAge
     @Binding var browseWeek: Int?
+    /// Wide pane: the ring grows to fill the space left under the header, centred.
+    var expanded = false
     var onEditDates: () -> Void
     var onOpenWeek: () -> Void
 
-    @State private var bob = false
 
     private var shownWeek: Int { browseWeek ?? age.contentWeek }
     private var content: WeekContent? { WeekLibrary.week(shownWeek) }
@@ -171,7 +168,7 @@ struct WeekHeroView: View {
                 ZStack {
                     ProgressRing(
                         progress: browseWeek == nil ? age.ringProgress : Double(shownWeek * 7) / 280,
-                        lineWidth: 20
+                        lineWidth: expanded ? 30 : 20
                     )
                     VStack(spacing: 10) {
                         ZStack(alignment: .topTrailing) {
@@ -181,7 +178,11 @@ struct WeekHeroView: View {
                             Text(content?.emoji ?? "🌱")
                                 .font(.system(size: 92))
                                 .frame(width: 200, height: 170)
-                                .offset(y: bob ? -5 : 4)
+                                // Only the offset loops; a repeatForever transaction would also
+                                // catch layout moves (e.g. folding the Duo) and sway forever.
+                                .phaseAnimator([false, true]) { emoji, up in
+                                    emoji.offset(y: up ? -5 : 4)
+                                } animation: { _ in .easeInOut(duration: 2.4) }
                                 .contentTransition(.interpolate)
                             ShineMarks()
                                 .offset(x: -14, y: 8)
@@ -201,20 +202,23 @@ struct WeekHeroView: View {
                         }
                         .padding(.horizontal, 40)
                     }
+                    // Contents are drawn for the 330 pt ring; grow them with the bigger ring so
+                    // they keep the same proportion once the square is fitted to the pane.
+                    .frame(maxWidth: expanded ? 330 : nil)
+                    .scaleEffect(expanded ? 520 / 330 : 1)
                 }
-                .fittedSquare(330)
+                .fittedSquare(expanded ? 520 : 330)
                 .padding(.horizontal, 4)
             }
+            .frame(maxHeight: expanded ? .infinity : nil)
             .buttonStyle(PressableStyle())
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(profile.babyName) is \(content?.sizeSentence ?? ""). \(content?.measurementText ?? "")")
             .accessibilityHint("Opens this week's details")
         }
         .padding(.top, 4)
+        .frame(maxHeight: expanded ? .infinity : nil)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: shownWeek)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { bob = true }
-        }
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -236,7 +240,7 @@ struct WeekHeroView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.textSecondary.opacity(enabled ? 1 : 0.3))
+                .foregroundStyle(enabled ? Theme.textSecondary : Theme.textSecondary.opacity(0.3))
                 .frame(width: 36, height: 44)
         }
         .disabled(!enabled)

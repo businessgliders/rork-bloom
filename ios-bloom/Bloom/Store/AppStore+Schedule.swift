@@ -405,21 +405,36 @@ extension AppStore {
                 continue
             }
             let rows = remote.overrideDoses.filter { role($0.taker_id) == owner && medIDs.contains($0.medication_id) }
-            for (dateKey, dayRows) in Dictionary(grouping: rows, by: \.local_date) {
-                guard let date = PlanDay.date(String(dateKey.prefix(10))) else { continue }
+            let doseDays = Dictionary(grouping: rows) { String($0.local_date.prefix(10)) }
+            let routineDays = Dictionary(remote.dayRoutines.filter { role($0.taker_id) == owner }
+                .map { (String($0.local_date.prefix(10)), $0) }, uniquingKeysWith: { a, _ in a })
+            for dateKey in Set(doseDays.keys).union(routineDays.keys) {
+                guard let date = PlanDay.date(dateKey) else { continue }
+                let dayRows = doseDays[dateKey] ?? []
+                let routine = routineDays[dateKey]
                 var times: [UUID: DoseTime] = [:]
                 for row in dayRows { times[row.medication_id] = DoseTime(date: row.scheduled_for) }
                 let existing = overrides.first { $0.owner == owner && PregnancyMath.calendar.isDate($0.date, inSameDayAs: date) }
-                // Day-only meals, wake and bed live on this device; keep them across pulls.
-                newOverrides.append(DayOverride(id: existing?.id ?? UUID(), owner: owner, takerID: dayRows.first?.taker_id,
-                                                date: date, times: times, templateID: dayRows.first?.template_id,
-                                                meals: existing?.meals, wake: existing?.wake, bed: existing?.bed))
+                // Day-only wake, bed and meals come from `day_routines`, shared by both phones.
+                let meals = routine?.meals?.map {
+                    ScheduleMeal(id: $0.id, name: $0.name, time: SyncFormat.time(from: $0.time), durationMinutes: $0.duration_min ?? 30)
+                }
+                newOverrides.append(DayOverride(id: existing?.id ?? UUID(), owner: owner,
+                                                takerID: dayRows.first?.taker_id ?? routine?.taker_id,
+                                                date: date, times: times,
+                                                templateID: dayRows.first?.template_id ?? routine?.template_id,
+                                                meals: meals, wake: routine?.wake_time.map(SyncFormat.time(from:)),
+                                                bed: routine?.bed_time.map(SyncFormat.time(from:))))
             }
         }
         newOverrides.sort { ($0.date, $0.owner.rawValue) < ($1.date, $1.owner.rawValue) }
         let currentOverrides = overrides.sorted { ($0.date, $0.owner.rawValue) < ($1.date, $1.owner.rawValue) }
         // Keep local ids/order stable so an unchanged pull doesn't look like a change.
-        let overridesOut = newOverrides.map { $0.times }.elementsEqual(currentOverrides.map { $0.times }) && newOverrides.count == currentOverrides.count
+        // Same content (ids aside) means nothing changed.
+        let unchanged = newOverrides.count == currentOverrides.count && zip(newOverrides, currentOverrides).allSatisfy { n, c in
+            n.times == c.times && n.meals == c.meals && n.wake == c.wake && n.bed == c.bed
+        }
+        let overridesOut = unchanged
             ? overrides : newOverrides
 
         return (newTemplates.sorted { $0.id.uuidString < $1.id.uuidString } == templates.sorted { $0.id.uuidString < $1.id.uuidString } ? templates : newTemplates,

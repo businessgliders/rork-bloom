@@ -147,7 +147,7 @@ nonisolated struct DayOverride: Codable, Identifiable, Equatable {
     var date: Date
     var times: [UUID: DoseTime]
     var templateID: UUID?
-    /// This day's own meals, wake and bed ("Just today" routine edits). Kept on this device only.
+    /// This day's own meals, wake and bed ("Just today" routine edits). Synced via `day_routines`.
     var meals: [ScheduleMeal]?
     var wake: DoseTime?
     var bed: DoseTime?

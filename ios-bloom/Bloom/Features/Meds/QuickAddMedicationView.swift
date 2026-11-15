@@ -341,7 +341,7 @@ struct QuickAddMedicationView: View {
                     store.setAILookupConsent(true)
                     run(pendingText)
                 }
-                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
+                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                 .accessibilityIdentifier("ai-consent-allow")
                 Button("Fill in myself") {
                     openFullForm(prefillName: true)
@@ -424,7 +424,7 @@ struct QuickAddMedicationView: View {
                         .font(.bloom(.subheadline, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                     Button("Use") { chooseTimes([DoseTime(date: customTime)]) }
-                        .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
+                        .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                 }
             }
             .bloomCard()

@@ -1,113 +1,5 @@
 import SwiftUI
 
-// MARK: - Horizontal strip on Journey
-
-struct TimelineStrip: View {
-    var milestones: [Milestone]
-    var onSelect: (Milestone) -> Void
-    var onAdd: () -> Void
-
-    @Environment(AppStore.self) private var store
-
-    private var firstUpcomingID: UUID? {
-        milestones.first(where: { !$0.isPast(store.now) })?.id
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Your timeline")
-                        .font(.bloom(.title, weight: .heavy))
-                        .foregroundStyle(Theme.text)
-                    Text("Typical; your provider's schedule may differ.")
-                        .font(.bloom(.footnote))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Spacer()
-                NavigationLink(value: TimelineRoute()) {
-                    Text("See all")
-                        .font(.bloom(.subheadline, weight: .bold))
-                        .foregroundStyle(Theme.blushDeep)
-                }
-            }
-
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(milestones) { milestone in
-                            Button { onSelect(milestone) } label: {
-                                MilestoneChip(milestone: milestone, isPast: milestone.isPast(store.now))
-                            }
-                            .buttonStyle(PressableStyle())
-                            .id(milestone.id)
-                        }
-                        Button(action: onAdd) {
-                            Label("Add", systemImage: "plus")
-                                .font(.bloom(.subheadline, weight: .bold))
-                                .foregroundStyle(Theme.blushDeep)
-                                .padding(.horizontal, 18)
-                                .frame(height: 58)
-                                .background(Theme.surface, in: .rect(cornerRadius: 20, style: .continuous))
-                        }
-                        .buttonStyle(PressableStyle())
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 6)
-                }
-                .padding(.horizontal, -20)
-                .onAppear {
-                    guard let id = firstUpcomingID else { return }
-                    // Show the most recent memory just before the next upcoming milestone.
-                    if let index = milestones.firstIndex(where: { $0.id == id }), index > 0 {
-                        proxy.scrollTo(milestones[index - 1].id, anchor: .leading)
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct MilestoneChip: View {
-    var milestone: Milestone
-    var isPast: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                if isPast {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(Theme.sageDeep)
-                } else {
-                    Image(systemName: milestone.isMarker ? "sparkles" : "calendar")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                }
-            }
-            .frame(width: 24)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(milestone.title)
-                    .font(.bloom(.subheadline, weight: .bold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.bloom(.caption, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 58)
-        .background(isPast ? Theme.sageSoft : Theme.blushSoft, in: .rect(cornerRadius: 20, style: .continuous))
-    }
-
-    private var subtitle: String {
-        if milestone.isSuggested, !milestone.userEdited, let window = milestone.windowLabel { return window }
-        return milestone.date.formatted(.dateTime.month(.abbreviated).day())
-    }
-}
-
 // MARK: - Full 9-month timeline
 
 private struct PregnancyMonth: Identifiable {
@@ -132,7 +24,7 @@ private struct PregnancyMonth: Identifiable {
     }
 }
 
-/// Add / restore menu shared by the pushed timeline and the wide-layout pane.
+/// Add / restore menu on the Timeline tab.
 private struct TimelineAddMenu: View {
     @Environment(AppStore.self) private var store
     @Binding var editing: MilestoneEditorItem?
@@ -157,41 +49,24 @@ private struct TimelineAddMenu: View {
     }
 }
 
-/// Pushed full-screen timeline (compact layouts).
-struct FullTimelineView: View {
+/// Timeline tab: the month-by-month timeline with "You are here", milestones, scan photos and +.
+struct TimelineTabView: View {
     @State private var editing: MilestoneEditorItem?
 
     var body: some View {
-        TimelineList(editing: $editing)
-            .background(BloomBackground())
-            .navigationTitle("9-month timeline")
-            .toolbar(.hidden, for: .tabBar)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    TimelineAddMenu(editing: $editing)
-                }
-            }
-    }
-}
-
-/// Right-hand pane of the wide (two-column) Journey layout.
-struct TimelinePane: View {
-    @State private var editing: MilestoneEditorItem?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Your timeline")
-                    .font(.bloom(.title2, weight: .heavy))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                TimelineAddMenu(editing: $editing)
-                    .labelStyle(.iconOnly)
-                    .font(.title2)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
+        NavigationStack {
             TimelineList(editing: $editing)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
+                .duoListClearance()
+                .background(BloomBackground())
+                .navigationTitle("Timeline")
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        TimelineAddMenu(editing: $editing)
+                            .accessibilityIdentifier("timeline-add")
+                    }
+                }
         }
     }
 }
@@ -374,7 +249,7 @@ struct MilestoneRow: View {
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                .foregroundStyle(Theme.textSecondary)
         }
         .padding(.vertical, 4)
         .contentShape(.rect)

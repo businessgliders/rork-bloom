@@ -292,7 +292,7 @@ struct AddMedicationView: View {
                         showConsent = false
                         runLookup()
                     }
-                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
+                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                     Button("Not now") {
                         store.setAILookupConsent(false)
                         showConsent = false
@@ -334,7 +334,7 @@ struct AddMedicationView: View {
                             suggestionLine("lightbulb", suggestion.tip)
                         }
                         Button("Use these suggestions") { apply(suggestion) }
-                            .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.peach))
+                            .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.peachButton))
                             .padding(.top, 4)
                     } else {
                         Text("We couldn't find general information for this name. Please fill it in from your prescription label.")

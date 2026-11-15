@@ -248,7 +248,7 @@ struct SettingsView: View {
                             .font(.bloom(.headline, weight: .bold))
                         HStack {
                             Text(code)
-                                .font(.system(size: 28, weight: .heavy, design: .rounded))
+                                .font(.system(size: 28, weight: .heavy))
                                 .tracking(6)
                                 .foregroundStyle(Theme.blushDeep)
                                 .textSelection(.enabled)

@@ -58,6 +58,13 @@ struct MedsBoxView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     if phase != .done { Button("Cancel", action: onClose) }
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focused = false }
+                        .fontWeight(.semibold)
+                        .tint(Theme.roseButton)
+                        .accessibilityIdentifier("medsbox-keyboard-done")
+                }
                 if phase == .review {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Edit text") { go(.input) }
@@ -114,7 +121,7 @@ struct MedsBoxView: View {
                 if text.isEmpty {
                     Text("e.g. \(example)")
                         .font(.bloom(.body))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                        .foregroundStyle(Theme.textSecondary)
                         .padding(.top, 8)
                         .padding(.leading, 5)
                         .allowsHitTesting(false)
@@ -196,7 +203,7 @@ struct MedsBoxView: View {
                     store.setAILookupConsent(true)
                     run()
                 }
-                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.blush))
+                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                 .accessibilityIdentifier("ai-consent-allow")
                 Button("Not now") { go(.input) }
                     .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
@@ -463,10 +470,18 @@ struct MedsBoxView: View {
     private func prefill() {
         guard text.isEmpty else { return }
         let current = store.scheduledMedications(for: owner)
-        let mine = store.rules(for: owner).map(\.sourceText).filter { !$0.isEmpty }
+        let names = Dictionary(store.medications.map { ($0.id, $0.shortName) }, uniquingKeysWith: { a, _ in a })
+        // Each rule names its medication, so reading the list again keeps it on the right one.
+        let mine = store.rules(for: owner).map { rule -> String in
+            let subject = names[rule.subjectID] ?? ""
+            var line = rule.sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty { line = ScheduleEngine.describe(rule, names: names, includeSubject: false) }
+            if !subject.isEmpty, line.range(of: subject, options: .caseInsensitive) == nil { line = "\(subject) \(line)" }
+            return line
+        }.filter { !$0.isEmpty }
         if !mine.isEmpty {
-            let names = current.map(\.shortName).joined(separator: ", ")
-            text = "\(names).\n" + mine.joined(separator: ". ") + "."
+            let list = current.map(\.shortName).joined(separator: ", ")
+            text = "\(list).\n" + mine.joined(separator: ". ") + "."
         } else if !current.isEmpty || store.medications.contains(where: { $0.owner == owner }) {
             let all = store.medications.filter { $0.owner == owner && $0.endDate == nil }
             text = all.map(\.shortName).joined(separator: ", ") + (all.isEmpty ? "" : ". ")

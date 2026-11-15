@@ -3,6 +3,7 @@ import SwiftUI
 /// Top-level destinations. Add a case here to add a tab later.
 enum AppTab: String, CaseIterable, Identifiable {
     case journey
+    case timeline
     case meds
 
     var id: String { rawValue }
@@ -10,6 +11,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .journey: "Journey"
+        case .timeline: "Timeline"
         case .meds: "Meds"
         }
     }
@@ -17,6 +19,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .journey: "camera.macro"
+        case .timeline: "calendar.day.timeline.leading"
         case .meds: "pills.fill"
         }
     }
@@ -25,6 +28,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var content: some View {
         switch self {
         case .journey: JourneyView()
+        case .timeline: TimelineTabView()
         case .meds: MedsView()
         }
     }

@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The day as one time-ordered list: medications (with a checkmark), "8:00–8:30 · No food" rows and meals.
-/// Today: long-press an upcoming medication or meal and drag to change its time (5-minute steps);
-/// tap a time to pick one. Changes show inline under the row; nothing is saved until she chooses.
+/// Today: tap an upcoming medication's or meal's time to pick a new one on an inline wheel.
+/// Changes show inline under the row; nothing is saved until she chooses. Rows never capture
+/// drags, so the list always scrolls.
 struct MedsTodayList: View {
     var instances: [DoseInstance]
     var meals: [ScheduleMeal]
@@ -14,11 +15,8 @@ struct MedsTodayList: View {
     /// Today only: draws the now line and projects overdue food windows from now.
     var now: Date?
     var actions: DoseActions
-    /// Tells the screen to stop scrolling while a row is dragged.
-    var onDragging: (Bool) -> Void = { _ in }
 
     @Environment(AppStore.self) private var store
-    @State private var drag: RowDrag?
     @State private var picker: InlinePicker?
 
     fileprivate enum Entry: Identifiable {
@@ -135,7 +133,6 @@ struct MedsTodayList: View {
                    value: instances.map { "\($0.id)\($0.anchor.timeIntervalSince1970)\($0.status?.rawValue ?? "")" })
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picker?.entryID)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
-        .sensoryFeedback(.selection, trigger: drag?.minutes) { old, new in old != nil && new != nil }
     }
 
     private func isNow(_ entry: Entry) -> Bool {
@@ -147,7 +144,7 @@ struct MedsTodayList: View {
 
     /// While the panel waits for her choice, a dose it would move shows its proposed time next to the old one.
     private func pendingMinutes(_ id: UUID) -> Int? {
-        guard drag == nil, let change = store.scheduleChange, change.kind != .review,
+        guard let change = store.scheduleChange, change.kind != .review,
               Calendar.current.isDate(change.date, inSameDayAs: day),
               let t = change.times[id], let old = change.original[id], t != old else { return nil }
         return t
@@ -163,28 +160,23 @@ struct MedsTodayList: View {
                 instance: instance,
                 canLog: canLog,
                 actions: actions,
-                dragMinutes: drag?.id == med.id ? drag?.minutes : nil,
-                previewMinutes: drag?.preview?.moved[med.id] ?? pendingMinutes(med.id),
-                brokenReason: drag?.preview?.broken[med.id],
+                previewMinutes: pendingMinutes(med.id),
+                isEditingTime: picker?.entryID == entry.id && isMovePicker,
                 hasWarning: instance.isPending && warnings.contains(med.id),
                 onTimeTap: movable ? { openMovePicker(entryID: entry.id, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) } : nil,
                 onWarning: { review(instance) },
                 onPickTime: { openLogPicker(entryID: entry.id, instance: instance) }
             )
-            .modifier(DragToMove(enabled: movable, onStart: { startDrag(id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) },
-                                 onChange: updateDrag, onEnd: endDrag))
         case .noFood(let window):
             SpanRow(start: window.start, end: window.end, title: "No food",
                     detail: window.reasons.joined(separator: ", "), tint: Theme.coralDeep, bar: Theme.coral)
                 .accessibilityIdentifier("today-nofood")
         case .meal(let meal, let start, let end):
             let movable = canMove(meal, start: start)
-            let shift = drag?.id == meal.id ? Double(((drag?.minutes ?? 0) - minutes(start)) * 60) : 0
-            SpanRow(start: start.addingTimeInterval(shift), end: end.addingTimeInterval(shift), title: meal.name,
-                    detail: "Food OK", tint: Theme.sageDeep, bar: Theme.sage, isDragging: drag?.id == meal.id,
+            SpanRow(start: start, end: end, title: meal.name,
+                    detail: "Food OK", tint: Theme.sageDeep, bar: Theme.sage,
+                    isEditingTime: picker?.entryID == entry.id,
                     onTimeTap: movable ? { openMovePicker(entryID: entry.id, id: meal.id, owner: owner, isMeal: true, at: start) } : nil)
-                .modifier(DragToMove(enabled: movable, onStart: { startDrag(id: meal.id, owner: owner, isMeal: true, at: start) },
-                                     onChange: updateDrag, onEnd: endDrag))
                 .accessibilityIdentifier("today-meal-\(meal.name)")
         case .now(let date):
             NowLine(date: date)
@@ -207,40 +199,9 @@ struct MedsTodayList: View {
         return start > now
     }
 
-    // MARK: Dragging
-
-    private func startDrag(id: UUID, owner: MedOwner, isMeal: Bool, at date: Date) {
-        guard let state = store.dayState(owner, on: day) else { return }
-        let base = minutes(date)
-        let range = isMeal ? state.wake...max(state.bed, state.wake) : state.range
-        picker = nil
-        store.scheduleChange = nil
-        drag = RowDrag(id: id, owner: owner, isMeal: isMeal, base: base, minutes: base, range: range, preview: nil)
-        onDragging(true)
-        Haptics.tap()
-    }
-
-    /// Up is earlier: about 6 pt per 5 minutes.
-    private func updateDrag(_ translation: CGFloat) {
-        guard var d = drag else { return }
-        let steps = Int((translation / 6).rounded())
-        let raw = ScheduleEngine.roundNearest(d.base) + steps * 5
-        let clamped = min(max(raw, d.range.lowerBound), d.range.upperBound)
-        guard clamped != d.minutes else { return }
-        d.minutes = clamped
-        let edit: DayEdit = d.isMeal ? .meal(d.id, clamped) : .dose(d.id, clamped)
-        d.preview = clamped == d.base ? nil : store.previewDayChange(owner: d.owner, day: day, edit: edit)
-        drag = d
-    }
-
-    private func endDrag() {
-        defer {
-            drag = nil
-            onDragging(false)
-        }
-        guard let d = drag, d.minutes != d.base else { return }
-        let edit: DayEdit = d.isMeal ? .meal(d.id, d.minutes) : .dose(d.id, d.minutes)
-        store.proposeDayChange(owner: d.owner, day: day, edit: edit, placement: .row(d.id))
+    private var isMovePicker: Bool {
+        if case .move = picker?.mode { return true }
+        return false
     }
 
     private func review(_ instance: DoseInstance) {
@@ -330,16 +291,6 @@ struct MedsTodayList: View {
 
 // MARK: - State
 
-private struct RowDrag: Equatable {
-    var id: UUID
-    var owner: MedOwner
-    var isMeal: Bool
-    var base: Int
-    var minutes: Int
-    var range: ClosedRange<Int>
-    var preview: DragPreview?
-}
-
 private struct InlinePicker: Equatable {
     enum Mode: Equatable {
         /// Change a planned time (a medication or a meal).
@@ -375,47 +326,6 @@ private struct InlinePicker: Equatable {
     }
 }
 
-/// Long-press, then drag up or down.
-private struct DragToMove: ViewModifier {
-    var enabled: Bool
-    var onStart: () -> Void
-    var onChange: (CGFloat) -> Void
-    var onEnd: () -> Void
-    @State private var started = false
-    /// True while the finger is down. Resets on its own when the system cancels the
-    /// gesture (where `onEnded` never runs), so the screen can't stay scroll-locked.
-    @GestureState private var active = false
-
-    func body(content: Content) -> some View {
-        if enabled {
-            content.gesture(
-                LongPressGesture(minimumDuration: 0.35)
-                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-                    .updating($active) { _, state, _ in state = true }
-                    .onChanged { value in
-                        guard case .second(true, let drag) = value else { return }
-                        if !started {
-                            started = true
-                            onStart()
-                        }
-                        if let drag { onChange(drag.translation.height) }
-                    }
-                    .onEnded { _ in
-                        if started { onEnd() }
-                        started = false
-                    }
-            )
-            .onChange(of: active) { _, isActive in
-                guard !isActive, started else { return }
-                started = false
-                onEnd()
-            }
-        } else {
-            content
-        }
-    }
-}
-
 // MARK: - Rows
 
 private let timeWidth: CGFloat = 72
@@ -432,7 +342,7 @@ private struct SpanRow: View {
     var detail: String
     var tint: Color
     var bar: Color
-    var isDragging = false
+    var isEditingTime = false
     var onTimeTap: (() -> Void)?
 
     var body: some View {
@@ -447,7 +357,7 @@ private struct SpanRow: View {
                     .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(tint)
                 if !detail.isEmpty {
-                    Text(isDragging ? "Drag to change · release to review" : detail)
+                    Text(detail)
                         .font(.bloom(.footnote, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -457,7 +367,6 @@ private struct SpanRow: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 14)
-        .background(isDragging ? Theme.sageSoft : .clear)
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title), \(clock(start)) to \(clock(end))")
@@ -466,16 +375,19 @@ private struct SpanRow: View {
     @ViewBuilder
     private var timeLabel: some View {
         let label = VStack(alignment: .trailing, spacing: 0) {
-            Text(clock(start))
-            Text(clock(end)).opacity(0.7)
+            EditableTime(text: clock(start), editable: onTimeTap != nil, isEditing: isEditingTime)
+                .foregroundStyle(onTimeTap == nil ? Theme.textSecondary : Theme.blushDeep)
+            Text(clock(end))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.trailing, onTimeTap == nil ? 0 : EditableTime.chevronSpace)
         }
         .font(.bloom(.caption, weight: .bold))
         .monospacedDigit()
-        .foregroundStyle(isDragging ? Theme.sageDeep : (onTimeTap == nil ? Theme.textSecondary : Theme.blushDeep))
         .lineLimit(1)
         .minimumScaleFactor(0.7)
         .contentTransition(.numericText())
         .frame(width: timeWidth, alignment: .trailing)
+        .frame(minHeight: 44)
         if let onTimeTap {
             Button(action: onTimeTap) { label }
                 .buttonStyle(PressableStyle())
@@ -490,19 +402,15 @@ private struct TodayDoseRow: View {
     var instance: DoseInstance
     var canLog: Bool
     var actions: DoseActions
-    /// This row is being dragged: its live time.
-    var dragMinutes: Int?
-    /// Another row is being dragged and this dose would move here.
+    /// The change panel proposes moving this dose here; the old time shows faint above it.
     var previewMinutes: Int?
-    /// Another row is being dragged and a rule of this dose would break.
-    var brokenReason: String?
+    /// Its inline time wheel is open.
+    var isEditingTime = false
     var hasWarning: Bool
     var onTimeTap: (() -> Void)?
     var onWarning: () -> Void
     var onPickTime: () -> Void
     @Environment(AppStore.self) private var store
-
-    private var isDragging: Bool { dragMinutes != nil }
 
     var body: some View {
         let med = instance.medication
@@ -521,7 +429,7 @@ private struct TodayDoseRow: View {
                         .strikethrough(instance.isSkipped, color: Theme.textSecondary)
                         .lineLimit(2)
                         .minimumScaleFactor(0.85)
-                    if hasWarning, !isDragging {
+                    if hasWarning {
                         Button(action: onWarning) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 14, weight: .semibold))
@@ -534,22 +442,10 @@ private struct TodayDoseRow: View {
                         .accessibilityIdentifier("today-warning-\(med.shortName)")
                     }
                 }
-                if let brokenReason {
-                    Text(brokenReason)
-                        .font(.bloom(.footnote, weight: .semibold))
-                        .foregroundStyle(Theme.coralDeep)
-                        .lineLimit(2)
-                        .transition(.opacity)
-                } else if isDragging {
-                    Text("Drag to change · release to review")
-                        .font(.bloom(.footnote, weight: .semibold))
-                        .foregroundStyle(Theme.blushDeep)
-                } else {
-                    Text(statusText)
-                        .font(.bloom(.footnote, weight: .semibold))
-                        .foregroundStyle(statusColor)
-                        .lineLimit(2)
-                }
+                Text(statusText)
+                    .font(.bloom(.footnote, weight: .semibold))
+                    .foregroundStyle(statusColor)
+                    .lineLimit(2)
             }
             Spacer(minLength: 4)
 
@@ -558,21 +454,13 @@ private struct TodayDoseRow: View {
         .padding(.vertical, 8)
         .padding(.leading, 14)
         .padding(.trailing, canLog ? 6 : 14)
-        .background(rowBackground)
+        .background(isEditingTime ? Theme.blushSoft.opacity(0.5) : .clear)
         .contentShape(.rect)
-        .animation(.easeOut(duration: 0.15), value: brokenReason)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today-row-\(med.shortName)")
     }
 
-    private var rowBackground: Color {
-        if isDragging { return Theme.blushSoft }
-        if brokenReason != nil { return Theme.coralSoft }
-        return .clear
-    }
-
     private var barColor: Color {
-        if brokenReason != nil { return Theme.coral }
         if instance.isTaken { return Theme.sage }
         if instance.isSkipped { return Theme.surfaceMuted }
         return Theme.blush
@@ -581,35 +469,34 @@ private struct TodayDoseRow: View {
     @ViewBuilder
     private var timeLabel: some View {
         let label = VStack(alignment: .trailing, spacing: 0) {
-            if let dragMinutes {
-                Text(ScheduleEngine.clock(dragMinutes))
+            if let previewMinutes {
+                Text(clock(instance.anchor))
+                    .font(.bloom(.caption, weight: .semibold))
+                    .strikethrough(true, color: Theme.textSecondary)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.trailing, onTimeTap == nil ? 0 : EditableTime.chevronSpace)
+                EditableTime(text: ScheduleEngine.clock(previewMinutes), editable: onTimeTap != nil, isEditing: isEditingTime)
                     .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(Theme.blushDeep)
-                    .contentTransition(.numericText())
+                    .transition(.opacity)
             } else {
-                Text(clock(instance.anchor))
+                EditableTime(text: clock(instance.anchor), editable: onTimeTap != nil, isEditing: isEditingTime)
                     .font(.bloom(.subheadline, weight: .heavy))
                     .foregroundStyle(instance.isPending ? (onTimeTap == nil ? Theme.text : Theme.blushDeep) : Theme.textSecondary)
-                    .opacity(previewMinutes == nil ? 1 : 0.45)
-                if let previewMinutes {
-                    Text(ScheduleEngine.clock(previewMinutes))
-                        .font(.bloom(.caption, weight: .semibold))
-                        .foregroundStyle(brokenReason == nil ? Theme.blushDeep : Theme.coralDeep)
-                        .opacity(0.7)
-                        .transition(.opacity)
-                }
             }
         }
         .monospacedDigit()
         .lineLimit(1)
         .minimumScaleFactor(0.7)
         .frame(width: timeWidth, alignment: .trailing)
-        .animation(.easeOut(duration: 0.12), value: dragMinutes)
+        .frame(minHeight: 44)
+        .contentShape(.rect)
         .animation(.easeOut(duration: 0.15), value: previewMinutes)
         if let onTimeTap {
             Button(action: onTimeTap) { label }
                 .buttonStyle(PressableStyle())
                 .accessibilityLabel("Change \(instance.medication.shortName) time, \(clock(instance.anchor))")
+                .accessibilityHint("Opens a time wheel under the row")
                 .accessibilityIdentifier("today-time-\(instance.medication.shortName)")
         } else {
             label
@@ -677,6 +564,28 @@ private struct TodayDoseRow: View {
         if instance.isTaken { return Theme.sageDeep }
         if instance.isSkipped { return Theme.textSecondary }
         return instance.medication.foodRule == .emptyStomach ? Theme.coralDeep : Theme.textSecondary
+    }
+}
+
+/// A time she can tap to change: the time plus a small chevron, so it reads as editable.
+private struct EditableTime: View {
+    static let chevronSpace: CGFloat = 11
+    var text: String
+    var editable: Bool
+    var isEditing: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(text)
+            if editable {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .heavy))
+                    .rotationEffect(.degrees(isEditing ? 180 : 0))
+                    .frame(width: 8)
+                    .accessibilityHidden(true)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isEditing)
     }
 }
 
