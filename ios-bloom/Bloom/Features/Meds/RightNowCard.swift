@@ -136,7 +136,7 @@ private struct FoodStatusBand: View {
                             .font(.bloom(.title2, weight: .heavy))
                             .foregroundStyle(Theme.coralDeep)
                             .contentTransition(.numericText())
-                        Text("\(remainingText(window.end.timeIntervalSince(now))) left · for \(window.reasons.joined(separator: " & "))")
+                        Text("\(remainingText(window.end.timeIntervalSince(now))) left · \(window.label)")
                             .font(.bloom(.subheadline, weight: .semibold))
                             .foregroundStyle(Theme.text.opacity(0.75))
                             .monospacedDigit()

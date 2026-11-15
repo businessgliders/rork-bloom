@@ -28,7 +28,7 @@ struct MedsTodayList: View {
         var id: String {
             switch self {
             case .dose(let i): "dose-\(i.id)"
-            case .noFood(let w): "nofood-\(Int(w.start.timeIntervalSince1970))"
+            case .noFood(let w): "nofood-\(w.id)"
             case .meal(let m, _, _): "meal-\(m.id)"
             case .now: "now"
             }
@@ -43,13 +43,13 @@ struct MedsTodayList: View {
             }
         }
 
-        /// Ties: the food window opens before the dose that causes it, meals after doses.
+        /// Ties: "before" windows end at their dose, "after" windows start right below it, meals come last.
         var rank: Int {
             switch self {
-            case .noFood: 0
+            case .noFood(let w): w.part == .after ? 3 : 0
             case .now: 1
             case .dose: 2
-            case .meal: 3
+            case .meal: 4
             }
         }
     }
@@ -57,18 +57,53 @@ struct MedsTodayList: View {
     private var isToday: Bool { now != nil }
 
     private var entries: [Entry] {
+        let preview = previewInstances
+        // A dose being moved sits at its new time so its no-food rows stay around it.
+        var previewAnchor: [String: Date] = [:]
+        for (original, shown) in zip(instances, preview) where shown.anchor != original.anchor {
+            previewAnchor[original.id] = shown.anchor
+        }
+        func key(_ e: Entry) -> (Date, Int) {
+            if case .dose(let i) = e, let t = previewAnchor[i.id] { return (t, e.rank) }
+            return (e.time, e.rank)
+        }
         var list: [Entry] = instances.map { .dose($0) }
-        list += MedsEngine.noFoodWindows(for: instances, now: now).map { .noFood($0) }
+        list += MedsEngine.noFoodWindows(for: preview, now: now).map { .noFood($0) }
         list += meals.map { meal in
             let start = meal.time.date(on: day)
             return .meal(meal, start: start, end: start.addingTimeInterval(Double(meal.durationMinutes) * 60))
         }
-        list.sort { ($0.time, $0.rank) < ($1.time, $1.rank) }
-        if let now, !list.isEmpty, let first = list.first?.time, let last = list.last?.time, now > first, now < last {
+        list.sort { key($0) < key($1) }
+        if let now, !list.isEmpty, let first = list.first.map(key)?.0, let last = list.last.map(key)?.0, now > first, now < last {
             list.append(.now(now))
-            list.sort { ($0.time, $0.rank) < ($1.time, $1.rank) }
+            list.sort { key($0) < key($1) }
         }
         return list
+    }
+
+    /// The doses as they'd be with the time being picked or proposed, so the no-food rows move live
+    /// while the wheel spins, and the "after" row counts from the taken time being logged.
+    private var previewInstances: [DoseInstance] {
+        instances.map { instance in
+            let med = instance.medication
+            if let picker {
+                switch picker.mode {
+                case .move(let id, _, false) where id == med.id && instance.isPending:
+                    return DoseInstance(medication: med, scheduledAt: picker.time, log: nil)
+                case .log(let target) where target.id == instance.id:
+                    var log = instance.log ?? DoseLog(medicationID: med.id, scheduledAt: instance.scheduledAt, status: .taken)
+                    log.status = .taken
+                    log.takenAt = picker.time
+                    return DoseInstance(medication: med, scheduledAt: instance.scheduledAt, log: log)
+                default: break
+                }
+            }
+            if instance.isPending, let m = pendingMinutes(med.id) {
+                let start = PregnancyMath.calendar.startOfDay(for: day)
+                return DoseInstance(medication: med, scheduledAt: start.addingTimeInterval(Double(m) * 60), log: nil)
+            }
+            return instance
+        }
     }
 
     /// Medications that break a rule today, by id.
@@ -132,6 +167,7 @@ struct MedsTodayList: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.85),
                    value: instances.map { "\($0.id)\($0.anchor.timeIntervalSince1970)\($0.status?.rawValue ?? "")" })
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picker?.entryID)
+        .animation(.easeOut(duration: 0.2), value: picker?.time)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
     }
 
@@ -168,8 +204,9 @@ struct MedsTodayList: View {
                 onPickTime: { openLogPicker(entryID: entry.id, instance: instance) }
             )
         case .noFood(let window):
-            SpanRow(start: window.start, end: window.end, title: "No food",
-                    detail: window.reasons.joined(separator: ", "), tint: Theme.coralDeep, bar: Theme.coral)
+            SpanRow(start: window.start, end: window.end, title: window.title,
+                    detail: window.part == .after && window.isConfirmed ? "Counted from when it was taken" : "",
+                    tint: Theme.coralDeep, bar: Theme.coral)
                 .accessibilityIdentifier("today-nofood")
         case .meal(let meal, let start, let end):
             let movable = canMove(meal, start: start)

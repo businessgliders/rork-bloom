@@ -1,17 +1,41 @@
 import Foundation
 
-/// A merged stretch of time with no food.
+/// A stretch of time with no food: the part before one medication, the part after it,
+/// or one block where different medications' windows overlap.
 nonisolated struct NoFoodWindow: Equatable, Identifiable {
+    enum Part: String, Equatable {
+        /// Before the dose, ending at its time.
+        case before
+        /// After the dose, counted from when it was taken (or its planned time until then).
+        case after
+        /// Two or more medications' windows that overlap, shown as one.
+        case combined
+    }
+
     var start: Date
     var end: Date
     /// Medication names that cause this window.
     var reasons: [String]
     /// True when at least one dose inside has actually been taken (window is real, not just planned).
     var isConfirmed: Bool
+    var part: Part = .combined
 
-    var id: Date { start }
+    var id: String { "\(part.rawValue)-\(reasons.joined(separator: "+"))-\(Int(start.timeIntervalSince1970))" }
 
     func contains(_ date: Date) -> Bool { date >= start && date < end }
+
+    /// "before Iron", "after Iron", "Iron & Thyroid".
+    var label: String {
+        let names = reasons.joined(separator: " & ")
+        switch part {
+        case .before: return "before \(names)"
+        case .after: return "after \(names)"
+        case .combined: return names
+        }
+    }
+
+    /// "No food · before Iron".
+    var title: String { "No food · \(label)" }
 }
 
 /// One row on the Meds timeline.
@@ -23,7 +47,7 @@ nonisolated enum MedsTimelineEntry: Identifiable, Equatable {
     var id: String {
         switch self {
         case .dose(let instance): "dose-\(instance.id)"
-        case .noFood(let window): "nofood-\(Int(window.start.timeIntervalSince1970))"
+        case .noFood(let window): "nofood-\(window.id)"
         case .foodOK(let start, _): "foodok-\(Int(start.timeIntervalSince1970))"
         }
     }
@@ -111,30 +135,39 @@ nonisolated enum MedsEngine {
 
     // MARK: Food windows
 
-    /// No-food windows for the given doses, merged where they overlap or touch.
+    /// No-food windows for the given doses. Each dose gives a "before" part ending at its time and
+    /// an "after" part starting at it, so the medication sits between them in the list.
     /// Each window counts from the dose's anchor: the actual taken time once logged, otherwise the planned time.
+    /// Windows merge only where different medications' windows overlap (touching isn't overlapping).
     /// Skipped doses create no window.
     /// When `now` is given, an overdue dose that hasn't been logged projects its window from `now`
     /// ("if you take it now"), so the app never claims a pause that started without the medicine.
     static func noFoodWindows(for instances: [DoseInstance], now: Date? = nil) -> [NoFoodWindow] {
-        let raw: [NoFoodWindow] = instances.compactMap { instance in
+        var raw: [NoFoodWindow] = []
+        for instance in instances {
             let med = instance.medication
-            guard med.hasNoFoodWindow, !instance.isSkipped else { return nil }
+            guard med.hasNoFoodWindow, !instance.isSkipped else { continue }
             var anchor = instance.anchor
             if let now, instance.isPending, instance.scheduledAt < now { anchor = now }
-            let start = anchor.addingTimeInterval(-Double(med.noFoodBeforeMinutes) * 60)
-            let end = anchor.addingTimeInterval(Double(med.noFoodAfterMinutes) * 60)
-            guard end > start else { return nil }
-            return NoFoodWindow(start: start, end: end, reasons: [med.reasonLabel], isConfirmed: instance.isTaken)
+            if med.noFoodBeforeMinutes > 0 {
+                raw.append(NoFoodWindow(start: anchor.addingTimeInterval(-Double(med.noFoodBeforeMinutes) * 60), end: anchor,
+                                        reasons: [med.reasonLabel], isConfirmed: instance.isTaken, part: .before))
+            }
+            if med.noFoodAfterMinutes > 0 {
+                raw.append(NoFoodWindow(start: anchor, end: anchor.addingTimeInterval(Double(med.noFoodAfterMinutes) * 60),
+                                        reasons: [med.reasonLabel], isConfirmed: instance.isTaken, part: .after))
+            }
         }
-        .sorted { $0.start < $1.start }
+        raw.sort { ($0.start, $0.end) < ($1.start, $1.end) }
 
         var merged: [NoFoodWindow] = []
         for window in raw {
-            if var last = merged.last, window.start <= last.end {
+            if var last = merged.last, window.start < last.end, !Set(window.reasons).isSubset(of: last.reasons) {
                 last.end = max(last.end, window.end)
                 for reason in window.reasons where !last.reasons.contains(reason) { last.reasons.append(reason) }
+                last.reasons.sort { $0.localizedStandardCompare($1) == .orderedAscending }
                 last.isConfirmed = last.isConfirmed || window.isConfirmed
+                last.part = .combined
                 merged[merged.count - 1] = last
             } else {
                 merged.append(window)
@@ -151,7 +184,10 @@ nonisolated enum MedsEngine {
         for (index, window) in windows.enumerated() {
             entries.append(.noFood(window))
             let nextStart = index + 1 < windows.count ? windows[index + 1].start : nil
-            entries.append(.foodOK(start: window.end, until: nextStart))
+            // A "before" part followed straight by its "after" part leaves no gap to eat in.
+            if nextStart.map({ $0 > window.end }) ?? true {
+                entries.append(.foodOK(start: window.end, until: nextStart))
+            }
         }
         return entries.sorted { lhs, rhs in
             if lhs.time != rhs.time { return lhs.time < rhs.time }

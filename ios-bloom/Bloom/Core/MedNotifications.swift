@@ -154,7 +154,7 @@ enum MedNotifications {
 
             // "Can eat again" once a confirmed (taken) window ends today, per person.
             if offset == 0 {
-                for window in MedsEngine.noFoodWindows(for: MedsEngine.carryOver(into: day, medications: medications, logs: logs) + instances) where window.isConfirmed && window.end > now {
+                for window in MedsEngine.noFoodWindows(for: MedsEngine.carryOver(into: day, medications: medications, logs: logs) + instances) where window.isConfirmed && window.part != .before && window.end > now {
                     let content = UNMutableNotificationContent()
                     let reasons = window.reasons.joined(separator: " & ")
                     if let person {

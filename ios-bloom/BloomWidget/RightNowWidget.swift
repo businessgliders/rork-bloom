@@ -213,9 +213,11 @@ private struct NoFoodBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("No food")
+            Text(window.title)
                 .font(.bloom(.subheadline, weight: .heavy))
                 .foregroundStyle(Theme.coralDeep)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(timerInterval: min(now, window.end)...window.end, countsDown: true)
                 .font(.system(size: 30, weight: .heavy))
                 .monospacedDigit()
