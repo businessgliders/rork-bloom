@@ -59,6 +59,32 @@ nonisolated struct ScheduleResult: Equatable {
     var violations: [RuleViolation]
 }
 
+/// A one-tap way out of a broken rule. Every fix is checked to keep all rules of the item it changes.
+nonisolated struct ScheduleFix: Identifiable, Equatable {
+    enum Kind: Equatable {
+        /// Put a medication at this minute.
+        case move(UUID, Int)
+        /// Leave a medication out today.
+        case skip(UUID)
+        /// Change the routine itself (bedtime, wake-up or one meal) and re-place doses to fit.
+        case retime(RoutineTweak)
+    }
+
+    struct RoutineTweak: Equatable {
+        var wake: Int?
+        var bed: Int?
+        var mealName: String?
+        var mealStart: Int?
+        /// Every dose's minute after the change.
+        var times: [UUID: Int]
+    }
+
+    /// "Move Iron to 1:30 PM", "Take Thyroid 30 min earlier", "Skip Iron today"
+    var title: String
+    var kind: Kind
+    var id: String { title }
+}
+
 /// Deterministic placement of medications in a routine. No AI: the same routine and rules
 /// always give the same times.
 nonisolated enum ScheduleEngine {
@@ -328,6 +354,9 @@ nonisolated enum ScheduleEngine {
             if rule.relation == .after, let maxV = rule.maxMinutes, t - routine.wake > maxV {
                 message = "\(subject) is now \(duration(t - routine.wake)) after waking; your rule is at most \(duration(maxV))"
                 fix = "Closest fix: take \(subject) at \(clock(routine.wake + maxV))."
+            } else if rule.relation == .after, minV == 0 {
+                message = "\(subject) is now at \(clock(t)), before waking up (\(clock(routine.wake)))"
+                fix = "Closest fix: take \(subject) at \(clock(routine.wake))."
             } else if rule.relation == .after {
                 message = "\(subject) is now \(duration(max(0, t - routine.wake))) after waking; your rule is \(duration(minV))"
             }
@@ -335,7 +364,8 @@ nonisolated enum ScheduleEngine {
         case .bed:
             let goal = routine.bed - minV
             message = rule.relation == .before
-                ? "\(subject) is now \(duration(max(0, routine.bed - t))) before bed; your rule is \(duration(minV))"
+                ? (minV == 0 ? "\(subject) is now at \(clock(t)), after bedtime (\(clock(routine.bed)))"
+                   : "\(subject) is now \(duration(max(0, routine.bed - t))) before bed; your rule is \(duration(minV))")
                 : "\(subject) is now at \(clock(t)); your rule puts it at \(clock(goal))"
             fix = "Closest fix: take \(subject) at \(clock(goal))."
         }
@@ -377,6 +407,216 @@ nonisolated enum ScheduleEngine {
         case (.bed, _): text = minV == 0 ? "at bedtime" : "\(duration(minV)) before bed"
         }
         return includeSubject ? "\(subject) · \(text)" : text
+    }
+
+    // MARK: Fixing
+
+    /// Every dose stays between waking up and bedtime. These implied rules join her own whenever a time is set,
+    /// so a dose after bedtime is named and fixed like any other broken rule. Ids are stable per medication.
+    static func dayBounds(for ids: some Sequence<UUID>) -> [ScheduleRule] {
+        ids.sorted { $0.uuidString < $1.uuidString }.flatMap { id in
+            [ScheduleRule(id: derived(id, 0xB0), subjectID: id, relation: .after, target: .wake, minMinutes: 0),
+             ScheduleRule(id: derived(id, 0xBE), subjectID: id, relation: .before, target: .bed, minMinutes: 0)]
+        }
+    }
+
+    private static func derived(_ id: UUID, _ salt: UInt8) -> UUID {
+        var u = id.uuid
+        u.0 ^= salt
+        u.15 ^= salt
+        return UUID(uuid: u)
+    }
+
+    /// The time nearest `target` (5-minute steps, earlier first on ties) inside `range` where every rule
+    /// involving `id` holds, or nil when there is none.
+    static func closestValid(for id: UUID, near target: Int, times: [UUID: Int], routine: EngineRoutine,
+                             rules: [ScheduleRule], range: ClosedRange<Int>) -> Int? {
+        let relevant = rules.filter { $0.involves(id) }
+        let start = roundNearest(target)
+        func fits(_ t: Int) -> Bool {
+            var candidate = times
+            candidate[id] = t
+            return relevant.allSatisfy { (deficit($0, times: candidate, routine: routine) ?? 0) == 0 }
+        }
+        var offset = 0
+        while offset <= 1440 {
+            for t in offset == 0 ? [start] : [start - offset, start + offset] where range.contains(t) && fits(t) {
+                return t
+            }
+            offset += step
+        }
+        return nil
+    }
+
+    /// After one item moved: the fewest moves that put things right. Each medication (in dependency order) that
+    /// now breaks a rule moves to the closest time that keeps all of its rules; `locked` and pinned ones never move.
+    /// Whatever still can't fit stays where it is and shows up as a violation.
+    static func settle(times: [UUID: Int], locked: Set<UUID>, meds: [EngineMed], routine: EngineRoutine,
+                       rules: [ScheduleRule], range: ClosedRange<Int>) -> [UUID: Int] {
+        var result = times
+        for _ in 0..<2 {
+            for med in order(meds, rules: rules) where !locked.contains(med.id) && med.pinned == nil {
+                guard let current = result[med.id] else { continue }
+                let broken = rules.contains { $0.involves(med.id) && (deficit($0, times: result, routine: routine) ?? 0) > 0 }
+                guard broken,
+                      let t = closestValid(for: med.id, near: current, times: result, routine: routine, rules: rules, range: range)
+                else { continue }
+                result[med.id] = t
+            }
+        }
+        return result
+    }
+
+    /// One-tap fixes for a broken rule: move its medication, move the other medication, or (today only) skip one.
+    /// `fixed` are doses already logged; they never move or get skipped.
+    static func fixes(for violation: RuleViolation, times: [UUID: Int], fixed: Set<UUID>, routine: EngineRoutine,
+                      rules: [ScheduleRule], names: [UUID: String], range: ClosedRange<Int>, allowSkip: Bool,
+                      pinned: Set<UUID> = []) -> [ScheduleFix] {
+        let rule = violation.rule
+        var result: [ScheduleFix] = []
+        let subject = rule.subjectID
+        let other = rule.target == .medication ? rule.targetMedicationID : nil
+
+        if !fixed.contains(subject), let current = times[subject],
+           let t = closestValid(for: subject, near: current, times: times, routine: routine, rules: rules, range: range), t != current {
+            result.append(ScheduleFix(title: "Move \(names[subject] ?? "it") to \(clock(t))", kind: .move(subject, t)))
+        }
+        if let other, !fixed.contains(other), !pinned.contains(other), let current = times[other],
+           let t = closestValid(for: other, near: current, times: times, routine: routine, rules: rules, range: range), t != current {
+            let delta = t - current
+            result.append(ScheduleFix(title: "Take \(names[other] ?? "it") \(duration(abs(delta))) \(delta < 0 ? "earlier" : "later")",
+                                      kind: .move(other, t)))
+        }
+        if allowSkip {
+            if !fixed.contains(subject) {
+                result.append(ScheduleFix(title: "Skip \(names[subject] ?? "it") today", kind: .skip(subject)))
+            } else if let other, !fixed.contains(other) {
+                result.append(ScheduleFix(title: "Skip \(names[other] ?? "it") today", kind: .skip(other)))
+            }
+        }
+        var seen = Set<String>()
+        return result.filter { seen.insert($0.title).inserted }
+    }
+
+    /// When no dose can move to keep a rule: the smallest change to the routine that does, without breaking anything new.
+    /// Tries a later bedtime, an earlier wake-up, and moving each meal, in 5-minute steps; returns at most one of each kind
+    /// (up to two in all, closest first).
+    static func routineFixes(for violation: RuleViolation, times: [UUID: Int], meds: [EngineMed], routine: EngineRoutine,
+                             rules: [ScheduleRule], names: [UUID: String]) -> [ScheduleFix] {
+        let brokenBefore = Set(violations(times: times, routine: routine, rules: rules, names: names).map(\.rule.id))
+        func attempt(_ r: EngineRoutine) -> [UUID: Int]? {
+            guard r.wake < r.bed else { return nil }
+            let settled = settle(times: times, locked: [], meds: meds, routine: r, rules: rules, range: r.wake...r.bed)
+            let after = Set(violations(times: settled, routine: r, rules: rules, names: names).map(\.rule.id))
+            guard !after.contains(violation.rule.id), after.isSubset(of: brokenBefore) else { return nil }
+            return settled
+        }
+        var found: [(cost: Int, fix: ScheduleFix)] = []
+        // A later bedtime.
+        for b in stride(from: routine.bed + step, through: 23 * 60 + 55, by: step) {
+            var r = routine
+            r.bed = b
+            if let t = attempt(r) {
+                found.append((b - routine.bed, ScheduleFix(title: "Move bedtime to \(clock(b))",
+                                                           kind: .retime(ScheduleFix.RoutineTweak(bed: b, times: t)))))
+                break
+            }
+        }
+        // An earlier wake-up.
+        for w in stride(from: routine.wake - step, through: 4 * 60, by: -step) {
+            var r = routine
+            r.wake = w
+            if let t = attempt(r) {
+                found.append((routine.wake - w, ScheduleFix(title: "Wake up at \(clock(w))",
+                                                            kind: .retime(ScheduleFix.RoutineTweak(wake: w, times: t)))))
+                break
+            }
+        }
+        // One meal earlier or later (up to 3 h), keeping meals in order and inside the day.
+        var bestMeal: (cost: Int, fix: ScheduleFix)?
+        for (i, meal) in routine.meals.enumerated() {
+            for offset in stride(from: step, through: 180, by: step) {
+                if let best = bestMeal, offset >= best.cost { break }
+                var hit: (Int, [UUID: Int])?
+                for start in [meal.start - offset, meal.start + offset] {
+                    guard start >= routine.wake, start + meal.duration <= routine.bed else { continue }
+                    var r = routine
+                    r.meals[i].start = start
+                    let sorted = r.meals.map(\.start)
+                    guard sorted == sorted.sorted() else { continue }
+                    if let t = attempt(r) { hit = (start, t); break }
+                }
+                if let (start, t) = hit {
+                    bestMeal = (offset, ScheduleFix(title: "Move \(meal.name.lowercased()) to \(clock(start))",
+                                                    kind: .retime(ScheduleFix.RoutineTweak(mealName: meal.name, mealStart: start, times: t))))
+                    break
+                }
+            }
+        }
+        if let bestMeal { found.append(bestMeal) }
+        return found.sorted { $0.cost < $1.cost }.prefix(2).map(\.fix)
+    }
+
+    /// Why a rule can't be kept, in one or two sentences:
+    /// "Iron needs at least 4 h after Thyroid. The earliest Iron can go is 11:15 PM, after bedtime."
+    static func blockedReason(for violation: RuleViolation, times: [UUID: Int], fixed: Set<UUID>, routine: EngineRoutine,
+                              rules: [ScheduleRule], names: [UUID: String], range: ClosedRange<Int>) -> String {
+        let rule = violation.rule
+        let subjectName = names[rule.subjectID] ?? "This medication"
+        let goes = rule.relation == .with || rule.relation == .at || (rule.target == .wake && rule.relation != .after)
+            || (rule.target == .bed && rule.relation != .before) || rule.isDayBound
+        var text = describe(rule, names: names, includeSubject: false)
+        if rule.isNoFood { text += " it" }
+        let head = rule.isDayBound ? violation.message.replacingOccurrences(of: " is now at ", with: " is at ") + "."
+            : "\(subjectName) \(goes ? "goes" : "needs") \(text)."
+
+        let target = rule.target == .medication ? rule.targetMedicationID : nil
+        let movable: UUID? = !fixed.contains(rule.subjectID) ? rule.subjectID : target.flatMap { fixed.contains($0) ? nil : $0 }
+        guard let id = movable else { return head }
+        let name = names[id] ?? "It"
+        let window = stride(from: 0, through: 1435, by: step).filter { t in
+            var candidate = times
+            candidate[id] = t
+            return (deficit(rule, times: candidate, routine: routine) ?? 0) == 0
+        }
+        guard let first = window.first, let last = window.last else { return head + " No time in the day works for it." }
+        let inRange = window.filter { range.contains($0) }
+        if inRange.isEmpty {
+            if first > range.upperBound {
+                return head + " The earliest \(name) can go is \(clock(first)), after bedtime."
+            }
+            if last < range.lowerBound {
+                let passed = range.lowerBound > roundUp(routine.wake)
+                return head + " The latest \(name) could go was \(clock(last)), \(passed ? "already passed" : "before waking up")."
+            }
+            return head + " No time between \(clock(range.lowerBound)) and bedtime works."
+        }
+        if closestValid(for: id, near: inRange[0], times: times, routine: routine, rules: rules, range: range) == nil {
+            let others = rules.filter { $0.involves(id) && $0.id != rule.id }
+            let clash = others.first { o in
+                !inRange.contains { t in
+                    var candidate = times
+                    candidate[id] = t
+                    return (deficit(o, times: candidate, routine: routine) ?? 0) == 0
+                }
+            } ?? others.first
+            if let clash {
+                if clash.subjectID == id, clash.target != .medication {
+                    return head + " Its rule \u{201C}\(describe(clash, names: names, includeSubject: false))\u{201D} keeps it there."
+                }
+                return head + " That can't fit together with \(describe(clash, names: names))."
+            }
+        }
+        return head
+    }
+
+    /// Short live text while dragging: "Iron would be 3 h after Thyroid; needs 4 h".
+    static func shortReason(_ violation: RuleViolation) -> String {
+        violation.message
+            .replacingOccurrences(of: " is now ", with: " would be ")
+            .replacingOccurrences(of: " are now ", with: " would be ")
+            .replacingOccurrences(of: "; your rule is ", with: "; needs ")
+            .replacingOccurrences(of: "; your rule puts it at ", with: "; goes at ")
     }
 
     // MARK: Editing

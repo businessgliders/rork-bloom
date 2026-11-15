@@ -1,16 +1,25 @@
 import SwiftUI
 
 /// The day as one time-ordered list: medications (with a checkmark), "8:00–8:30 · No food" rows and meals.
-/// Plain rows, no decoration.
+/// Today: long-press an upcoming medication or meal and drag to change its time (5-minute steps);
+/// tap a time to pick one. Changes show inline under the row; nothing is saved until she chooses.
 struct MedsTodayList: View {
     var instances: [DoseInstance]
     var meals: [ScheduleMeal]
     var day: Date
+    /// Whose routine the meals belong to.
+    var owner: MedOwner
     /// Future days are read-only.
     var canLog: Bool
     /// Today only: draws the now line and projects overdue food windows from now.
     var now: Date?
     var actions: DoseActions
+    /// Tells the screen to stop scrolling while a row is dragged.
+    var onDragging: (Bool) -> Void = { _ in }
+
+    @Environment(AppStore.self) private var store
+    @State private var drag: RowDrag?
+    @State private var picker: InlinePicker?
 
     fileprivate enum Entry: Identifiable {
         case dose(DoseInstance)
@@ -47,6 +56,8 @@ struct MedsTodayList: View {
         }
     }
 
+    private var isToday: Bool { now != nil }
+
     private var entries: [Entry] {
         var list: [Entry] = instances.map { .dose($0) }
         list += MedsEngine.noFoodWindows(for: instances, now: now).map { .noFood($0) }
@@ -62,8 +73,36 @@ struct MedsTodayList: View {
         return list
     }
 
+    /// Medications that break a rule today, by id.
+    private var warnings: Set<UUID> {
+        let owners = Set(instances.filter { $0.medication.managed }.map(\.medication.owner))
+        var ids = Set<UUID>()
+        for o in owners {
+            for v in store.dayViolations(o, on: day) { ids.insert(v.rule.subjectID) }
+        }
+        return ids
+    }
+
+    /// The change panel for this list, and the row it sits under.
+    private func panelAnchor(_ entries: [Entry]) -> (String, ScheduleChange)? {
+        guard let change = store.scheduleChange, case .row(let id) = change.placement,
+              PregnancyMath.calendar.isDate(change.date, inSameDayAs: day) else { return nil }
+        for entry in entries {
+            switch entry {
+            case .dose(let i) where i.medication.id == id && i.medication.owner == change.owner:
+                return (entry.id, change)
+            case .meal(let m, _, _) where m.id == id && change.owner == owner:
+                return (entry.id, change)
+            default: continue
+            }
+        }
+        return nil
+    }
+
     var body: some View {
         let entries = entries
+        let warnings = warnings
+        let panel = panelAnchor(entries)
         VStack(spacing: 0) {
             if entries.isEmpty {
                 Text("Nothing planned on this day.")
@@ -76,13 +115,27 @@ struct MedsTodayList: View {
                 if index > 0, !isNow(entry), !isNow(entries[index - 1]) {
                     Divider().padding(.leading, 88)
                 }
-                row(entry)
+                row(entry, warnings: warnings)
                     .transition(.opacity)
+                if let picker, picker.entryID == entry.id {
+                    pickerRow(picker)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                if let panel, panel.0 == entry.id {
+                    ScheduleChangePanel(change: panel.1)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
+                        .id(ScheduleChangePanel.scrollID)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
         .background(Theme.surface, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
         .animation(.spring(response: 0.45, dampingFraction: 0.85),
                    value: instances.map { "\($0.id)\($0.anchor.timeIntervalSince1970)\($0.status?.rawValue ?? "")" })
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picker?.entryID)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
+        .sensoryFeedback(.selection, trigger: drag?.minutes) { old, new in old != nil && new != nil }
     }
 
     private func isNow(_ entry: Entry) -> Bool {
@@ -90,20 +143,275 @@ struct MedsTodayList: View {
         return false
     }
 
+    // MARK: Rows
+
+    /// While the panel waits for her choice, a dose it would move shows its proposed time next to the old one.
+    private func pendingMinutes(_ id: UUID) -> Int? {
+        guard drag == nil, let change = store.scheduleChange, change.kind != .review,
+              Calendar.current.isDate(change.date, inSameDayAs: day),
+              let t = change.times[id], let old = change.original[id], t != old else { return nil }
+        return t
+    }
+
     @ViewBuilder
-    private func row(_ entry: Entry) -> some View {
+    private func row(_ entry: Entry, warnings: Set<UUID>) -> some View {
         switch entry {
         case .dose(let instance):
-            TodayDoseRow(instance: instance, canLog: canLog, actions: actions)
+            let med = instance.medication
+            let movable = canMove(instance)
+            TodayDoseRow(
+                instance: instance,
+                canLog: canLog,
+                actions: actions,
+                dragMinutes: drag?.id == med.id ? drag?.minutes : nil,
+                previewMinutes: drag?.preview?.moved[med.id] ?? pendingMinutes(med.id),
+                brokenReason: drag?.preview?.broken[med.id],
+                hasWarning: instance.isPending && warnings.contains(med.id),
+                onTimeTap: movable ? { openMovePicker(entryID: entry.id, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) } : nil,
+                onWarning: { review(instance) },
+                onPickTime: { openLogPicker(entryID: entry.id, instance: instance) }
+            )
+            .modifier(DragToMove(enabled: movable, onStart: { startDrag(id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) },
+                                 onChange: updateDrag, onEnd: endDrag))
         case .noFood(let window):
             SpanRow(start: window.start, end: window.end, title: "No food",
                     detail: window.reasons.joined(separator: ", "), tint: Theme.coralDeep, bar: Theme.coral)
                 .accessibilityIdentifier("today-nofood")
         case .meal(let meal, let start, let end):
-            SpanRow(start: start, end: end, title: meal.name, detail: "Food OK", tint: Theme.sageDeep, bar: Theme.sage)
+            let movable = canMove(meal, start: start)
+            let shift = drag?.id == meal.id ? Double(((drag?.minutes ?? 0) - minutes(start)) * 60) : 0
+            SpanRow(start: start.addingTimeInterval(shift), end: end.addingTimeInterval(shift), title: meal.name,
+                    detail: "Food OK", tint: Theme.sageDeep, bar: Theme.sage, isDragging: drag?.id == meal.id,
+                    onTimeTap: movable ? { openMovePicker(entryID: entry.id, id: meal.id, owner: owner, isMeal: true, at: start) } : nil)
+                .modifier(DragToMove(enabled: movable, onStart: { startDrag(id: meal.id, owner: owner, isMeal: true, at: start) },
+                                     onChange: updateDrag, onEnd: endDrag))
                 .accessibilityIdentifier("today-meal-\(meal.name)")
         case .now(let date):
             NowLine(date: date)
+        }
+    }
+
+    private func minutes(_ date: Date) -> Int {
+        let c = PregnancyMath.calendar.dateComponents([.hour, .minute], from: date)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    /// Only today's medications Bloom plans, not yet logged, can move.
+    private func canMove(_ instance: DoseInstance) -> Bool {
+        isToday && canLog && instance.isPending && instance.medication.managed && store.hasRoutine(instance.medication.owner)
+    }
+
+    /// Meals still to come today.
+    private func canMove(_ meal: ScheduleMeal, start: Date) -> Bool {
+        guard let now, canLog, store.hasRoutine(owner) else { return false }
+        return start > now
+    }
+
+    // MARK: Dragging
+
+    private func startDrag(id: UUID, owner: MedOwner, isMeal: Bool, at date: Date) {
+        guard let state = store.dayState(owner, on: day) else { return }
+        let base = minutes(date)
+        let range = isMeal ? state.wake...max(state.bed, state.wake) : state.range
+        picker = nil
+        store.scheduleChange = nil
+        drag = RowDrag(id: id, owner: owner, isMeal: isMeal, base: base, minutes: base, range: range, preview: nil)
+        onDragging(true)
+        Haptics.tap()
+    }
+
+    /// Up is earlier: about 6 pt per 5 minutes.
+    private func updateDrag(_ translation: CGFloat) {
+        guard var d = drag else { return }
+        let steps = Int((translation / 6).rounded())
+        let raw = ScheduleEngine.roundNearest(d.base) + steps * 5
+        let clamped = min(max(raw, d.range.lowerBound), d.range.upperBound)
+        guard clamped != d.minutes else { return }
+        d.minutes = clamped
+        let edit: DayEdit = d.isMeal ? .meal(d.id, clamped) : .dose(d.id, clamped)
+        d.preview = clamped == d.base ? nil : store.previewDayChange(owner: d.owner, day: day, edit: edit)
+        drag = d
+    }
+
+    private func endDrag() {
+        defer {
+            drag = nil
+            onDragging(false)
+        }
+        guard let d = drag, d.minutes != d.base else { return }
+        let edit: DayEdit = d.isMeal ? .meal(d.id, d.minutes) : .dose(d.id, d.minutes)
+        store.proposeDayChange(owner: d.owner, day: day, edit: edit, placement: .row(d.id))
+    }
+
+    private func review(_ instance: DoseInstance) {
+        Haptics.tap()
+        picker = nil
+        store.proposeDayChange(owner: instance.medication.owner, day: day, edit: .review, placement: .row(instance.medication.id))
+    }
+
+    // MARK: Inline time picker
+
+    private func openMovePicker(entryID: String, id: UUID, owner: MedOwner, isMeal: Bool, at date: Date) {
+        Haptics.select()
+        store.scheduleChange = nil
+        if picker?.entryID == entryID { picker = nil; return }
+        picker = InlinePicker(entryID: entryID, mode: .move(id: id, owner: owner, isMeal: isMeal), time: date)
+    }
+
+    private func openLogPicker(entryID: String, instance: DoseInstance) {
+        Haptics.select()
+        store.scheduleChange = nil
+        let upper = logRange(instance).upperBound
+        let start = min(instance.log?.takenAt ?? (isToday ? .now : instance.scheduledAt), upper)
+        picker = InlinePicker(entryID: entryID, mode: .log(instance), time: start)
+    }
+
+    private func logRange(_ instance: DoseInstance) -> ClosedRange<Date> {
+        let start = PregnancyMath.calendar.startOfDay(for: instance.scheduledAt)
+        let end = max(start, min(Date.now, PregnancyMath.addDays(1, to: start).addingTimeInterval(-60)))
+        return start...end
+    }
+
+    private func moveRange(_ mode: InlinePicker.Mode) -> ClosedRange<Date> {
+        let start = PregnancyMath.calendar.startOfDay(for: day)
+        guard case .move(_, let owner, let isMeal) = mode, let state = store.dayState(owner, on: day) else {
+            return start...PregnancyMath.addDays(1, to: start).addingTimeInterval(-60)
+        }
+        let range = isMeal ? state.wake...max(state.bed, state.wake) : state.range
+        return start.addingTimeInterval(Double(range.lowerBound) * 60)...start.addingTimeInterval(Double(range.upperBound) * 60)
+    }
+
+    private func pickerRow(_ value: InlinePicker) -> some View {
+        let range: ClosedRange<Date> = switch value.mode {
+        case .log(let instance): logRange(instance)
+        case .move: moveRange(value.mode)
+        }
+        return VStack(spacing: 4) {
+            DatePicker(value.title, selection: Binding(
+                get: { min(max(picker?.time ?? value.time, range.lowerBound), range.upperBound) },
+                set: { picker?.time = $0 }
+            ), in: range, displayedComponents: .hourAndMinute)
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+            .frame(maxHeight: 150)
+            .clipped()
+            HStack {
+                Button("Cancel") { picker = nil }
+                    .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
+                Spacer()
+                Text(value.title)
+                    .font(.bloom(.footnote))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button(value.doneLabel) { commit(value, range: range) }
+                    .buttonStyle(BloomSoftButtonStyle())
+                    .font(.bloom(.body, weight: .semibold))
+                    .accessibilityIdentifier("picker-done")
+            }
+            .padding(.horizontal, 10)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
+    }
+
+    private func commit(_ value: InlinePicker, range: ClosedRange<Date>) {
+        let time = min(max(picker?.time ?? value.time, range.lowerBound), range.upperBound)
+        picker = nil
+        switch value.mode {
+        case .log(let instance):
+            actions.taken(instance, time)
+        case .move(let id, let owner, let isMeal):
+            let m = ScheduleEngine.roundNearest(minutes(time))
+            let edit: DayEdit = isMeal ? .meal(id, m) : .dose(id, m)
+            store.proposeDayChange(owner: owner, day: day, edit: edit, placement: .row(id))
+        }
+    }
+}
+
+// MARK: - State
+
+private struct RowDrag: Equatable {
+    var id: UUID
+    var owner: MedOwner
+    var isMeal: Bool
+    var base: Int
+    var minutes: Int
+    var range: ClosedRange<Int>
+    var preview: DragPreview?
+}
+
+private struct InlinePicker: Equatable {
+    enum Mode: Equatable {
+        /// Change a planned time (a medication or a meal).
+        case move(id: UUID, owner: MedOwner, isMeal: Bool)
+        /// When she actually took it.
+        case log(DoseInstance)
+
+        static func == (a: Mode, b: Mode) -> Bool {
+            switch (a, b) {
+            case let (.move(x, _, _), .move(y, _, _)): x == y
+            case let (.log(x), .log(y)): x.id == y.id
+            default: false
+            }
+        }
+    }
+
+    var entryID: String
+    var mode: Mode
+    var time: Date
+
+    var title: String {
+        switch mode {
+        case .move: "New time"
+        case .log: "Taken at"
+        }
+    }
+
+    var doneLabel: String {
+        switch mode {
+        case .move: "Move"
+        case .log: "Log"
+        }
+    }
+}
+
+/// Long-press, then drag up or down.
+private struct DragToMove: ViewModifier {
+    var enabled: Bool
+    var onStart: () -> Void
+    var onChange: (CGFloat) -> Void
+    var onEnd: () -> Void
+    @State private var started = false
+    /// True while the finger is down. Resets on its own when the system cancels the
+    /// gesture (where `onEnded` never runs), so the screen can't stay scroll-locked.
+    @GestureState private var active = false
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.gesture(
+                LongPressGesture(minimumDuration: 0.35)
+                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                    .updating($active) { _, state, _ in state = true }
+                    .onChanged { value in
+                        guard case .second(true, let drag) = value else { return }
+                        if !started {
+                            started = true
+                            onStart()
+                        }
+                        if let drag { onChange(drag.translation.height) }
+                    }
+                    .onEnded { _ in
+                        if started { onEnd() }
+                        started = false
+                    }
+            )
+            .onChange(of: active) { _, isActive in
+                guard !isActive, started else { return }
+                started = false
+                onEnd()
+            }
+        } else {
+            content
         }
     }
 }
@@ -124,20 +432,12 @@ private struct SpanRow: View {
     var detail: String
     var tint: Color
     var bar: Color
+    var isDragging = false
+    var onTimeTap: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(clock(start))
-                Text(clock(end))
-            }
-            .font(.bloom(.caption))
-            .monospacedDigit()
-            .foregroundStyle(Theme.textSecondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(width: timeWidth, alignment: .trailing)
-
+            timeLabel
             RoundedRectangle(cornerRadius: 2)
                 .fill(bar)
                 .frame(width: 4, height: 30)
@@ -147,7 +447,7 @@ private struct SpanRow: View {
                     .font(.bloom(.subheadline, weight: .semibold))
                     .foregroundStyle(tint)
                 if !detail.isEmpty {
-                    Text(detail)
+                    Text(isDragging ? "Drag to change · release to review" : detail)
                         .font(.bloom(.footnote))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -157,8 +457,32 @@ private struct SpanRow: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 14)
+        .background(isDragging ? Theme.sageSoft : .clear)
+        .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title), \(clock(start)) to \(clock(end))")
+    }
+
+    @ViewBuilder
+    private var timeLabel: some View {
+        let label = VStack(alignment: .trailing, spacing: 0) {
+            Text(clock(start))
+            Text(clock(end))
+        }
+        .font(.bloom(.caption, weight: isDragging ? .semibold : .regular))
+        .monospacedDigit()
+        .foregroundStyle(isDragging ? Theme.sageDeep : (onTimeTap == nil ? Theme.textSecondary : Theme.blushDeep))
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .contentTransition(.numericText())
+        .frame(width: timeWidth, alignment: .trailing)
+        if let onTimeTap {
+            Button(action: onTimeTap) { label }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Change \(title) time")
+        } else {
+            label
+        }
     }
 }
 
@@ -166,62 +490,172 @@ private struct TodayDoseRow: View {
     var instance: DoseInstance
     var canLog: Bool
     var actions: DoseActions
+    /// This row is being dragged: its live time.
+    var dragMinutes: Int?
+    /// Another row is being dragged and this dose would move here.
+    var previewMinutes: Int?
+    /// Another row is being dragged and a rule of this dose would break.
+    var brokenReason: String?
+    var hasWarning: Bool
+    var onTimeTap: (() -> Void)?
+    var onWarning: () -> Void
+    var onPickTime: () -> Void
     @Environment(AppStore.self) private var store
+
+    private var isDragging: Bool { dragMinutes != nil }
 
     var body: some View {
         let med = instance.medication
         HStack(spacing: 12) {
-            Text(clock(instance.anchor))
-                .font(.bloom(.subheadline))
-                .monospacedDigit()
-                .foregroundStyle(instance.isPending ? Theme.text : Theme.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: timeWidth, alignment: .trailing)
+            timeLabel
 
             RoundedRectangle(cornerRadius: 2)
-                .fill(instance.isTaken ? Theme.sage : (instance.isSkipped ? Color(uiColor: .systemGray3) : Theme.blush))
+                .fill(barColor)
                 .frame(width: 4, height: 30)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(med.shortName)
-                    .font(.bloom(.body, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .strikethrough(instance.isSkipped, color: Theme.textSecondary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                Text(statusText)
-                    .font(.bloom(.footnote))
-                    .foregroundStyle(statusColor)
-                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(med.shortName)
+                        .font(.bloom(.body, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .strikethrough(instance.isSkipped, color: Theme.textSecondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                    if hasWarning, !isDragging {
+                        Button(action: onWarning) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.coralDeep)
+                                .frame(width: 28, height: 28)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(PressableStyle())
+                        .accessibilityLabel("\(med.shortName) breaks a rule. Show fixes")
+                        .accessibilityIdentifier("today-warning-\(med.shortName)")
+                    }
+                }
+                if let brokenReason {
+                    Text(brokenReason)
+                        .font(.bloom(.footnote, weight: .semibold))
+                        .foregroundStyle(Theme.coralDeep)
+                        .lineLimit(2)
+                        .transition(.opacity)
+                } else if isDragging {
+                    Text("Drag to change · release to review")
+                        .font(.bloom(.footnote))
+                        .foregroundStyle(Theme.blushDeep)
+                } else {
+                    Text(statusText)
+                        .font(.bloom(.footnote))
+                        .foregroundStyle(statusColor)
+                        .lineLimit(2)
+                }
             }
             Spacer(minLength: 4)
 
-            if canLog {
-                Button {
-                    if instance.isPending { actions.taken(instance) } else { actions.undo(instance) }
-                } label: {
-                    Image(systemName: instance.isTaken ? "checkmark.circle.fill" : (instance.isSkipped ? "minus.circle.fill" : "circle"))
-                        .font(.system(size: 26, weight: .regular))
-                        .foregroundStyle(instance.isTaken ? Theme.sageDeep : (instance.isSkipped ? Theme.textSecondary : Theme.blushDeep))
-                        .symbolEffect(.bounce, value: instance.isTaken)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(PressableStyle())
-                .accessibilityLabel(instance.isPending ? "Mark \(med.shortName) taken" : "Undo \(med.shortName)")
-                .accessibilityIdentifier("today-check-\(med.shortName)")
-            }
+            if canLog { check }
         }
         .padding(.vertical, 8)
         .padding(.leading, 14)
         .padding(.trailing, canLog ? 6 : 14)
+        .background(rowBackground)
         .contentShape(.rect)
-        .contextMenu {
-            if canLog { DoseMenuItems(instance: instance, actions: actions) }
-        }
+        .animation(.easeOut(duration: 0.15), value: brokenReason)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today-row-\(med.shortName)")
+    }
+
+    private var rowBackground: Color {
+        if isDragging { return Theme.blushSoft }
+        if brokenReason != nil { return Theme.coralSoft }
+        return .clear
+    }
+
+    private var barColor: Color {
+        if brokenReason != nil { return Theme.coral }
+        if instance.isTaken { return Theme.sage }
+        if instance.isSkipped { return Color(uiColor: .systemGray3) }
+        return Theme.blush
+    }
+
+    @ViewBuilder
+    private var timeLabel: some View {
+        let label = VStack(alignment: .trailing, spacing: 0) {
+            if let dragMinutes {
+                Text(ScheduleEngine.clock(dragMinutes))
+                    .font(.bloom(.subheadline, weight: .semibold))
+                    .foregroundStyle(Theme.blushDeep)
+                    .contentTransition(.numericText())
+            } else {
+                Text(clock(instance.anchor))
+                    .font(.bloom(.subheadline))
+                    .foregroundStyle(instance.isPending ? (onTimeTap == nil ? Theme.text : Theme.blushDeep) : Theme.textSecondary)
+                    .opacity(previewMinutes == nil ? 1 : 0.45)
+                if let previewMinutes {
+                    Text(ScheduleEngine.clock(previewMinutes))
+                        .font(.bloom(.caption, weight: .semibold))
+                        .foregroundStyle(brokenReason == nil ? Theme.blushDeep : Theme.coralDeep)
+                        .opacity(0.7)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .frame(width: timeWidth, alignment: .trailing)
+        .animation(.easeOut(duration: 0.12), value: dragMinutes)
+        .animation(.easeOut(duration: 0.15), value: previewMinutes)
+        if let onTimeTap {
+            Button(action: onTimeTap) { label }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Change \(instance.medication.shortName) time, \(clock(instance.anchor))")
+                .accessibilityIdentifier("today-time-\(instance.medication.shortName)")
+        } else {
+            label
+        }
+    }
+
+    /// Tap: taken now (or undo). Long-press: Now / Planned / Pick a time / Skip.
+    private var check: some View {
+        let med = instance.medication
+        return Menu {
+            if instance.isPending {
+                Button { actions.taken(instance, nowTime) } label: { Label("Now", systemImage: "checkmark.circle") }
+                if instance.scheduledAt <= .now {
+                    Button { actions.taken(instance, instance.scheduledAt) } label: {
+                        Label("Planned (\(clock(instance.scheduledAt)))", systemImage: "clock")
+                    }
+                }
+                Button(action: onPickTime) { Label("Pick a time…", systemImage: "clock.arrow.circlepath") }
+                Divider()
+                Button { actions.skip(instance) } label: { Label("Skip", systemImage: "forward.end") }
+            } else {
+                if instance.isTaken {
+                    Button(action: onPickTime) { Label("Change taken time…", systemImage: "clock.arrow.circlepath") }
+                }
+                Button { actions.undo(instance) } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+            }
+            Divider()
+            Button { actions.edit(med) } label: { Label("Edit medication", systemImage: "pencil") }
+        } label: {
+            Image(systemName: instance.isTaken ? "checkmark.circle.fill" : (instance.isSkipped ? "minus.circle.fill" : "circle"))
+                .font(.system(size: 26, weight: .regular))
+                .foregroundStyle(instance.isTaken ? Theme.sageDeep : (instance.isSkipped ? Theme.textSecondary : Theme.blushDeep))
+                .symbolEffect(.bounce, value: instance.isTaken)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 44, height: 44)
+        } primaryAction: {
+            if instance.isPending { actions.taken(instance, nowTime) } else { actions.undo(instance) }
+        }
+        .accessibilityLabel(instance.isPending ? "Mark \(med.shortName) taken" : "Undo \(med.shortName)")
+        .accessibilityHint("Touch and hold for more times")
+        .accessibilityIdentifier("today-check-\(med.shortName)")
+    }
+
+    /// "Now" on a past day means the planned time.
+    private var nowTime: Date {
+        PregnancyMath.calendar.isDate(instance.scheduledAt, inSameDayAs: .now) ? .now : instance.scheduledAt
     }
 
     private var statusText: String {

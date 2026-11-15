@@ -54,6 +54,11 @@ nonisolated struct ScheduleRule: Codable, Identifiable, Equatable, Hashable {
 
     /// True for "no food" rules, which create food windows on Today.
     var isNoFood: Bool { target == .food && (relation == .before || relation == .after || relation == .apart) }
+    /// "After waking up" / "before bed" with no gap: the day's bounds rather than her own rule.
+    var isDayBound: Bool {
+        (minMinutes ?? 0) == 0 && maxMinutes == nil
+            && ((target == .bed && relation == .before) || (target == .wake && relation == .after))
+    }
 
     func involves(_ medicationID: UUID) -> Bool { subjectID == medicationID || targetMedicationID == medicationID }
 }
@@ -117,6 +122,21 @@ nonisolated struct ScheduleTemplate: Codable, Identifiable, Equatable {
         }
         return positions.map { symbols[order[$0]] }.joined(separator: ", ")
     }
+
+    /// "Weekdays", "Weekend", "Every day", otherwise the days ("Mon, Wed").
+    static func autoName(_ days: Set<Int>) -> String {
+        if days.isEmpty { return "New routine" }
+        if days == Set(1...5) { return "Weekdays" }
+        if days == [0, 6] { return "Weekend" }
+        return daysLabel(days)
+    }
+
+    /// The name she gave it, or one made from its days.
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        // Older routines were named after their days ("Mon–Fri"); those follow the days.
+        return trimmed.isEmpty || trimmed == ScheduleTemplate.daysLabel(days) ? ScheduleTemplate.autoName(days) : trimmed
+    }
 }
 
 /// "Just today" times for one person on one date. Replaces the template's times for that day.
@@ -127,6 +147,10 @@ nonisolated struct DayOverride: Codable, Identifiable, Equatable {
     var date: Date
     var times: [UUID: DoseTime]
     var templateID: UUID?
+    /// This day's own meals, wake and bed ("Just today" routine edits). Kept on this device only.
+    var meals: [ScheduleMeal]?
+    var wake: DoseTime?
+    var bed: DoseTime?
 }
 
 nonisolated enum PlanDay {

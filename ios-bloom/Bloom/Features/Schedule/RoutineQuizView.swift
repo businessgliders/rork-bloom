@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Asks the person who takes the meds about their day: wake, meals (with rough durations), optional snacks, bed.
+/// One screen about the day of the person who takes the meds: wake, meals, an optional snack and bedtime.
 /// Creates (or updates) a routine; a first routine covers all 7 days.
 struct RoutineQuizView: View {
     var owner: MedOwner
@@ -12,252 +12,106 @@ struct RoutineQuizView: View {
 
     @Environment(AppStore.self) private var store
 
-    private enum Step: Int, CaseIterable {
-        case wake, breakfast, lunch, dinner, snacks, bed
-    }
-
-    @State private var step: Step = .wake
     @State private var wake = DoseTime(hour: 7, minute: 0)
     @State private var bed = DoseTime(hour: 22, minute: 30)
-    @State private var breakfast = MealAnswer(name: "Breakfast", time: DoseTime(hour: 7, minute: 30), duration: 20)
-    @State private var lunch = MealAnswer(name: "Lunch", time: DoseTime(hour: 12, minute: 30), duration: 30)
-    @State private var dinner = MealAnswer(name: "Dinner", time: DoseTime(hour: 19, minute: 0), duration: 40)
-    @State private var snacks: [MealAnswer] = []
+    @State private var breakfast = ScheduleMeal(name: "Breakfast", time: DoseTime(hour: 7, minute: 30), durationMinutes: 20)
+    @State private var lunch = ScheduleMeal(name: "Lunch", time: DoseTime(hour: 12, minute: 30), durationMinutes: 30)
+    @State private var dinner = ScheduleMeal(name: "Dinner", time: DoseTime(hour: 19, minute: 0), durationMinutes: 40)
+    @State private var snack = ScheduleMeal(name: "Snack", time: DoseTime(hour: 15, minute: 30), durationMinutes: 15)
+    @State private var hasSnack = false
+    /// Other meals of an existing routine (extra snacks) are kept as they are.
+    @State private var extras: [ScheduleMeal] = []
     @State private var loaded = false
 
-    struct MealAnswer: Equatable, Identifiable {
-        var id = UUID()
-        var name: String
-        var time: DoseTime
-        var duration: Int
-        var skipped = false
-    }
-
-    /// "you" for the viewer, the name otherwise.
     private var isViewer: Bool { !store.isShared || owner == store.viewerRole }
     private var name: String { store.name(for: owner) }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                BloomBackground()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        progress
-                        header
-                        stepBody
-                            .id(step)
-                            .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
+            List {
+                Section {
+                    timeRow("Wake up", systemImage: "sunrise", tint: Theme.peachDeep, time: $wake, id: "quiz-wake")
+                    mealRow($breakfast, systemImage: "cup.and.saucer", id: "quiz-breakfast-time")
+                    mealRow($lunch, systemImage: "fork.knife", id: "quiz-lunch-time")
+                    mealRow($dinner, systemImage: "fork.knife", id: "quiz-dinner-time")
+                    Toggle(isOn: $hasSnack.animation()) {
+                        Label {
+                            Text("Snack")
+                                .font(.bloom(.body))
+                        } icon: {
+                            Image(systemName: "carrot").foregroundStyle(Theme.sageDeep)
+                        }
                     }
-                    .padding(24)
-                    .frame(maxWidth: 560)
-                    .frame(maxWidth: .infinity)
+                    .tint(Theme.blush)
+                    .accessibilityIdentifier("quiz-snack")
+                    if hasSnack {
+                        mealRow($snack, systemImage: "clock", id: "quiz-snack-time", title: "Snack at")
+                    }
+                    timeRow("Bedtime", systemImage: "moon", tint: Theme.peachDeep, time: $bed, id: "quiz-bed")
+                } header: {
+                    Text(isViewer ? "When do you usually…" : "When does \(name) usually…")
+                } footer: {
+                    Text("Rough times are fine. Bloom plans every dose around \(isViewer ? "your" : "\(name)'s") day and nothing after bedtime. Snacks count as food for no-food windows.")
+                        .font(.bloom(.caption))
                 }
-                .safeAreaInset(edge: .bottom) { footer }
+
+                Section {
+                    Button {
+                        finish()
+                    } label: {
+                        Text(template == nil ? "Done" : "Save routine")
+                    }
+                    .buttonStyle(BloomPrimaryButtonStyle())
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .accessibilityIdentifier("quiz-done")
+                }
             }
-            .navigationTitle(template == nil ? "Your routine" : "Edit routine")
+            .navigationTitle(template == nil ? "Your day" : "Edit routine")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { onDone(nil) }
                 }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { finish() }
+                        .fontWeight(.semibold)
+                        .tint(Theme.blushDeep)
+                        .accessibilityIdentifier("quiz-next")
+                }
             }
-            .animation(.spring(response: 0.42, dampingFraction: 0.86), value: step)
             .onAppear(perform: load)
         }
     }
 
-    // MARK: Pieces
+    // MARK: Rows
 
-    private var progress: some View {
-        HStack(spacing: 6) {
-            ForEach(Step.allCases, id: \.self) { s in
-                Capsule()
-                    .fill(s.rawValue <= step.rawValue ? Theme.blush : Theme.ringTrack)
-                    .frame(height: 6)
+    private func timeRow(_ title: String, systemImage: String, tint: Color, time: Binding<DoseTime>, id: String) -> some View {
+        DatePicker(selection: dateBinding(time), displayedComponents: .hourAndMinute) {
+            Label {
+                Text(title).font(.bloom(.body))
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(tint)
             }
         }
-        .accessibilityLabel("Step \(step.rawValue + 1) of \(Step.allCases.count)")
+        .accessibilityIdentifier(id)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(question)
-                .font(.bloom(.largeTitle, weight: .bold))
-                .foregroundStyle(Theme.text)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(hint)
-                .font(.bloom(.subheadline))
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var question: String {
-        switch step {
-        case .wake: isViewer ? "When do you usually wake up?" : "When does \(name) usually wake up?"
-        case .breakfast: "Breakfast?"
-        case .lunch: "Lunch?"
-        case .dinner: "Dinner?"
-        case .snacks: "Any regular snacks?"
-        case .bed: isViewer ? "And bedtime?" : "And \(name)'s bedtime?"
-        }
-    }
-
-    private var hint: String {
-        switch step {
-        case .wake: "Bloom plans every dose around \(isViewer ? "your" : "\(name)'s") day. Rough times are fine."
-        case .breakfast, .lunch, .dinner: "Roughly when it starts and how long it takes."
-        case .snacks: "Optional. Snacks count as food for no-food windows."
-        case .bed: "Nothing gets planned after this."
-        }
-    }
-
-    @ViewBuilder
-    private var stepBody: some View {
-        switch step {
-        case .wake:
-            timeCard(time: $wake, label: "Wake up", id: "quiz-wake")
-        case .breakfast:
-            mealCard($breakfast)
-        case .lunch:
-            mealCard($lunch)
-        case .dinner:
-            mealCard($dinner)
-        case .snacks:
-            VStack(spacing: 14) {
-                ForEach($snacks) { $snack in
-                    mealCard($snack, removable: true)
-                }
-                if snacks.count < 3 {
-                    Button {
-                        Haptics.tap()
-                        let last = snacks.last?.time.minutesFromMidnight ?? 15 * 60 + 30
-                        snacks.append(MealAnswer(name: snacks.isEmpty ? "Snack" : "Snack \(snacks.count + 1)",
-                                                 time: DoseTime(minutes: snacks.isEmpty ? last : last + 120), duration: 15))
-                    } label: {
-                        Label("Add a snack", systemImage: "plus")
-                    }
-                    .buttonStyle(BloomSoftButtonStyle())
-                    .accessibilityIdentifier("quiz-add-snack")
-                }
-            }
-        case .bed:
-            timeCard(time: $bed, label: "Bedtime", id: "quiz-bed")
-        }
-    }
-
-    private func timeCard(time: Binding<DoseTime>, label: String, id: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .font(.bloom(.headline, weight: .semibold))
-                .foregroundStyle(Theme.text)
-            DatePicker(label, selection: dateBinding(time), displayedComponents: .hourAndMinute)
-                .datePickerStyle(.wheel)
-                .labelsHidden()
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier(id)
-        }
-        .bloomCard()
-    }
-
-    private func mealCard(_ meal: Binding<MealAnswer>, removable: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                if removable {
-                    TextField("Name", text: meal.name)
-                        .font(.bloom(.headline, weight: .semibold))
-                } else {
-                    Text(meal.wrappedValue.name)
-                        .font(.bloom(.headline, weight: .semibold))
-                }
-                Spacer()
-                if removable {
-                    Button(role: .destructive) {
-                        Haptics.tap()
-                        snacks.removeAll { $0.id == meal.wrappedValue.id }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    .accessibilityLabel("Remove \(meal.wrappedValue.name)")
-                } else {
-                    Toggle("I skip it", isOn: meal.skipped)
-                        .toggleStyle(.button)
-                        .font(.bloom(.footnote, weight: .semibold))
-                        .tint(Theme.textSecondary)
-                }
-            }
-            .foregroundStyle(Theme.text)
-
-            if !meal.wrappedValue.skipped {
-                DatePicker("Starts at", selection: dateBinding(meal.time), displayedComponents: .hourAndMinute)
-                    .font(.bloom(.body, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .accessibilityIdentifier("quiz-\(meal.wrappedValue.name.lowercased())-time")
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Takes about")
-                        .font(.bloom(.subheadline, weight: .semibold))
-                        .foregroundStyle(Theme.textSecondary)
-                    HStack(spacing: 8) {
-                        ForEach([10, 15, 20, 30, 45, 60], id: \.self) { minutes in
-                            let selected = meal.wrappedValue.duration == minutes
-                            Button {
-                                Haptics.select()
-                                meal.wrappedValue.duration = minutes
-                            } label: {
-                                Text(minutes == 60 ? "1 h" : "\(minutes)")
-                                    .font(.bloom(.subheadline, weight: .semibold))
-                                    .monospacedDigit()
-                                    .foregroundStyle(selected ? .white : Theme.sageDeep)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 9)
-                                    .background(selected ? Theme.sage : Theme.sageSoft, in: .capsule)
-                            }
-                            .buttonStyle(PressableStyle())
-                        }
-                    }
-                    Text("minutes")
+    private func mealRow(_ meal: Binding<ScheduleMeal>, systemImage: String, id: String, title: String? = nil) -> some View {
+        DatePicker(selection: dateBinding(meal.time), displayedComponents: .hourAndMinute) {
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title ?? meal.wrappedValue.name).font(.bloom(.body))
+                    Text("about \(Medication.durationText(meal.wrappedValue.durationMinutes))")
                         .font(.bloom(.caption))
                         .foregroundStyle(Theme.textSecondary)
                 }
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(Theme.sageDeep)
             }
         }
-        .bloomCard()
+        .accessibilityIdentifier(id)
     }
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            if step != .wake {
-                Button {
-                    Haptics.tap()
-                    step = Step(rawValue: step.rawValue - 1) ?? .wake
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 58, height: 58)
-                        .background(Theme.surface, in: .circle)
-                        .foregroundStyle(Theme.text)
-                }
-                .buttonStyle(PressableStyle())
-                .accessibilityLabel("Back")
-            }
-            Button {
-                next()
-            } label: {
-                Text(step == .bed ? (template == nil ? "Build my day" : "Save routine") : (step == .snacks && snacks.isEmpty ? "No snacks" : "Next"))
-            }
-            .buttonStyle(BloomPrimaryButtonStyle())
-            .accessibilityIdentifier("quiz-next")
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity)
-    }
-
-    // MARK: Logic
 
     private func dateBinding(_ time: Binding<DoseTime>) -> Binding<Date> {
         Binding(
@@ -266,14 +120,7 @@ struct RoutineQuizView: View {
         )
     }
 
-    private func next() {
-        Haptics.tap()
-        if let following = Step(rawValue: step.rawValue + 1) {
-            step = following
-        } else {
-            finish()
-        }
-    }
+    // MARK: Logic
 
     private func load() {
         guard !loaded else { return }
@@ -281,20 +128,25 @@ struct RoutineQuizView: View {
         guard let template else { return }
         wake = template.wake
         bed = template.bed
-        func find(_ word: String) -> ScheduleMeal? { template.meals.first { $0.name.lowercased().contains(word) } }
-        if let m = find("breakfast") { breakfast = MealAnswer(id: m.id, name: "Breakfast", time: m.time, duration: m.durationMinutes) } else { breakfast.skipped = true }
-        if let m = find("lunch") { lunch = MealAnswer(id: m.id, name: "Lunch", time: m.time, duration: m.durationMinutes) } else { lunch.skipped = true }
-        if let m = find("dinner") { dinner = MealAnswer(id: m.id, name: "Dinner", time: m.time, duration: m.durationMinutes) } else { dinner.skipped = true }
-        snacks = template.meals.filter { !["breakfast", "lunch", "dinner"].contains(where: $0.name.lowercased().contains) }
-            .map { MealAnswer(id: $0.id, name: $0.name, time: $0.time, duration: $0.durationMinutes) }
+        var rest = template.meals
+        func take(_ word: String) -> ScheduleMeal? {
+            guard let i = rest.firstIndex(where: { $0.name.lowercased().contains(word) }) else { return nil }
+            return rest.remove(at: i)
+        }
+        if let m = take("breakfast") { breakfast = m }
+        if let m = take("lunch") { lunch = m }
+        if let m = take("dinner") { dinner = m }
+        if let first = rest.first {
+            snack = first
+            hasSnack = true
+            rest.removeFirst()
+        }
+        extras = rest
     }
 
     private func finish() {
-        var meals: [ScheduleMeal] = []
-        for answer in [breakfast, lunch, dinner] + snacks where !answer.skipped {
-            let trimmed = answer.name.trimmingCharacters(in: .whitespaces)
-            meals.append(ScheduleMeal(id: answer.id, name: trimmed.isEmpty ? "Snack" : trimmed, time: answer.time, durationMinutes: answer.duration))
-        }
+        var meals = [breakfast, lunch, dinner] + extras
+        if hasSnack { meals.append(snack) }
         var t = template ?? ScheduleTemplate(owner: owner, name: "", wake: wake, bed: bed)
         if template == nil {
             let free = Set(0...6).subtracting(store.takenDays(for: owner, excluding: nil))
@@ -303,7 +155,6 @@ struct RoutineQuizView: View {
         t.wake = wake
         t.bed = bed.minutesFromMidnight > wake.minutesFromMidnight ? bed : DoseTime(hour: 23, minute: 30)
         t.meals = meals.sorted { $0.time < $1.time }
-        t.name = ScheduleTemplate.daysLabel(t.days)
         store.saveTemplate(t, regenerate: true)
         Haptics.success()
         onDone(store.templates.first { $0.id == t.id } ?? t)

@@ -18,31 +18,6 @@ struct RegimenMedDraft: Identifiable, Equatable {
     }
 }
 
-/// After an off-schedule dose: the rest of today recalculated from the real time.
-struct RescheduleProposal: Identifiable {
-    struct Change: Identifiable {
-        var medicationID: UUID
-        var name: String
-        var from: DoseTime
-        var to: DoseTime
-        var id: UUID { medicationID }
-    }
-
-    let id = UUID()
-    let owner: MedOwner
-    let date: Date
-    let templateID: UUID
-    /// "Mon–Thu"
-    let templateLabel: String
-    let takenMedicationID: UUID
-    let takenName: String
-    let takenAt: Date
-    let changes: [Change]
-    /// Every managed medication's time today after the change (taken doses keep their planned time).
-    let todayTimes: [UUID: DoseTime]
-    let violations: [RuleViolation]
-}
-
 extension AppStore {
     // MARK: - Reading
 
@@ -81,8 +56,27 @@ extension AppStore {
         templates(for: owner).filter { $0.id != templateID }.reduce(into: Set<Int>()) { $0.formUnion($1.days) }
     }
 
+    /// The day's meals: a "Just today" set when there is one, otherwise the routine's.
     func meals(for owner: MedOwner, on day: Date) -> [ScheduleMeal] {
-        template(for: owner, on: day)?.meals.sorted { $0.time < $1.time } ?? []
+        dayRoutine(owner, on: day)?.meals ?? []
+    }
+
+    func override(for owner: MedOwner, on day: Date) -> DayOverride? {
+        overrides.first { $0.owner == owner && PregnancyMath.calendar.isDate($0.date, inSameDayAs: day) }
+    }
+
+    /// The routine a day follows: the one she switched to for that day, otherwise the one for its weekday.
+    func activeTemplate(for owner: MedOwner, on day: Date) -> ScheduleTemplate? {
+        if let id = override(for: owner, on: day)?.templateID,
+           let t = templates.first(where: { $0.id == id && $0.owner == owner }) { return t }
+        return template(for: owner, on: day)
+    }
+
+    /// Wake, bed and meals for one day, with any "Just today" changes applied.
+    func dayRoutine(_ owner: MedOwner, on day: Date) -> (template: ScheduleTemplate, wake: DoseTime, bed: DoseTime, meals: [ScheduleMeal])? {
+        guard let t = activeTemplate(for: owner, on: day) else { return nil }
+        let o = override(for: owner, on: day)
+        return (t, o?.wake ?? t.wake, o?.bed ?? t.bed, (o?.meals ?? t.meals).sorted { $0.time < $1.time })
     }
 
     func describe(_ rule: ScheduleRule) -> String { ScheduleEngine.describe(rule, names: medicationNames) }
@@ -113,6 +107,7 @@ extension AppStore {
         let times = Dictionary(template.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
         let ids = Set(times.keys)
         let relevant = rules(for: template.owner).filter { ids.contains($0.subjectID) && ($0.target != .medication || ids.contains($0.targetMedicationID ?? UUID())) }
+            + ScheduleEngine.dayBounds(for: ids)
         return ScheduleEngine.violations(times: times, routine: EngineRoutine(template), rules: relevant, names: medicationNames)
     }
 
@@ -123,8 +118,13 @@ extension AppStore {
     func saveTemplate(_ template: ScheduleTemplate, regenerate: Bool) -> [RuleViolation] {
         var t = template
         if isShared { t.takerID = memberID(for: t.owner) }
+        let previousDays = templates.first { $0.id == t.id }?.days ?? t.days
+        let autoNamed = t.name.trimmingCharacters(in: .whitespaces).isEmpty
+            || t.name == ScheduleTemplate.daysLabel(previousDays) || t.name == ScheduleTemplate.autoName(previousDays)
         // Never let two templates of one person cover the same day.
         t.days.subtract(takenDays(for: t.owner, excluding: t.id))
+        // A name made from the days follows the days.
+        if autoNamed { t.name = ScheduleTemplate.autoName(t.days) }
         var found: [RuleViolation]
         if regenerate {
             let generated = generate(t)
@@ -153,11 +153,11 @@ extension AppStore {
         saveAndReschedule()
     }
 
-    /// Copies a template's routine and times. The copy starts with no days; the user picks free ones.
+    /// Copies a template's routine and times. The copy gets the days no routine covers (possibly none).
     func duplicateTemplate(_ template: ScheduleTemplate) -> ScheduleTemplate {
         var copy = template
         copy.id = UUID()
-        copy.name = "\(template.name) copy"
+        copy.name = ""
         copy.days = Set(0...6).subtracting(takenDays(for: template.owner, excluding: nil))
         copy.meals = template.meals.map { var m = $0; m.id = UUID(); return m }
         copy.doses = template.doses.map { var d = $0; d.id = UUID(); return d }
@@ -333,78 +333,6 @@ extension AppStore {
         for owner in Set(medications.filter(\.managed).map(\.owner)) { enqueue(.plan, owner.rawValue) }
     }
 
-    // MARK: - Off-schedule doses
-
-    /// After a dose taken more than 10 minutes off its plan: recalculates the rest of today from the real time.
-    func proposeRescheduleIfNeeded(after instance: DoseInstance, takenAt: Date) {
-        let cal = PregnancyMath.calendar
-        let med = instance.medication
-        guard med.managed, cal.isDateInToday(instance.scheduledAt), abs(takenAt.timeIntervalSince(instance.scheduledAt)) > 10 * 60,
-              let template = template(for: med.owner, on: instance.scheduledAt) else { return }
-        let today = instances(on: instance.scheduledAt).filter { $0.medication.owner == med.owner && $0.medication.managed }
-        func minutes(_ date: Date) -> Int {
-            let c = cal.dateComponents([.hour, .minute], from: date)
-            return (c.hour ?? 0) * 60 + (c.minute ?? 0)
-        }
-        var fixed: [UUID: Int] = [:]
-        var pending: [EngineMed] = []
-        for item in today {
-            if item.isPending {
-                let pinned = template.dose(for: item.medication.id)?.pinned == true ? minutes(item.scheduledAt) : nil
-                pending.append(EngineMed(id: item.medication.id, name: item.medication.shortName, pinned: pinned))
-            } else {
-                fixed[item.medication.id] = minutes(item.anchor)
-            }
-        }
-        guard !pending.isEmpty else { return }
-        let nowMinutes = minutes(max(Date.now, takenAt))
-        let result = ScheduleEngine.generate(routine: EngineRoutine(template), meds: pending, rules: rules(for: med.owner),
-                                             fixed: fixed, earliest: nowMinutes)
-        var changes: [RescheduleProposal.Change] = []
-        var todayTimes: [UUID: DoseTime] = [:]
-        for item in today {
-            let current = DoseTime(date: item.scheduledAt)
-            if item.isPending, let newMinutes = result.times[item.medication.id] {
-                let new = DoseTime(minutes: newMinutes)
-                todayTimes[item.medication.id] = new
-                if new != current {
-                    changes.append(.init(medicationID: item.medication.id, name: item.medication.shortName, from: current, to: new))
-                }
-            } else {
-                todayTimes[item.medication.id] = current
-            }
-        }
-        guard !changes.isEmpty else { return }
-        reschedule = RescheduleProposal(
-            owner: med.owner, date: cal.startOfDay(for: instance.scheduledAt), templateID: template.id,
-            templateLabel: ScheduleTemplate.daysLabel(template.days), takenMedicationID: med.id, takenName: med.shortName,
-            takenAt: takenAt, changes: changes.sorted { $0.to < $1.to }, todayTimes: todayTimes, violations: result.violations
-        )
-    }
-
-    /// "Just today" writes override rows; "Update my template" also moves the template's times.
-    func applyReschedule(_ proposal: RescheduleProposal, updateTemplate: Bool) {
-        let cal = PregnancyMath.calendar
-        overrides.removeAll { $0.owner == proposal.owner && cal.isDate($0.date, inSameDayAs: proposal.date) }
-        overrides.append(DayOverride(owner: proposal.owner, takerID: isShared ? memberID(for: proposal.owner) : nil,
-                                     date: proposal.date, times: proposal.todayTimes, templateID: proposal.templateID))
-        if updateTemplate, var template = templates.first(where: { $0.id == proposal.templateID }) {
-            for change in proposal.changes {
-                if let i = template.doses.firstIndex(where: { $0.medicationID == change.medicationID }) { template.doses[i].time = change.to }
-            }
-            if let i = template.doses.firstIndex(where: { $0.medicationID == proposal.takenMedicationID }) {
-                template.doses[i].time = DoseTime(minutes: ScheduleEngine.roundNearest(DoseTime(date: proposal.takenAt).minutesFromMidnight))
-            }
-            reschedule = nil
-            saveTemplate(template, regenerate: false)
-            return
-        }
-        reschedule = nil
-        enqueue(.plan, proposal.owner.rawValue)
-        rebuildPlan()
-        saveAndReschedule()
-    }
-
     // MARK: - Remote merge
 
     /// Templates, rules and overrides from a pull. Local versions with unsent changes win.
@@ -482,8 +410,10 @@ extension AppStore {
                 var times: [UUID: DoseTime] = [:]
                 for row in dayRows { times[row.medication_id] = DoseTime(date: row.scheduled_for) }
                 let existing = overrides.first { $0.owner == owner && PregnancyMath.calendar.isDate($0.date, inSameDayAs: date) }
+                // Day-only meals, wake and bed live on this device; keep them across pulls.
                 newOverrides.append(DayOverride(id: existing?.id ?? UUID(), owner: owner, takerID: dayRows.first?.taker_id,
-                                                date: date, times: times, templateID: dayRows.first?.template_id))
+                                                date: date, times: times, templateID: dayRows.first?.template_id,
+                                                meals: existing?.meals, wake: existing?.wake, bed: existing?.bed))
             }
         }
         newOverrides.sort { ($0.date, $0.owner.rawValue) < ($1.date, $1.owner.rawValue) }

@@ -5,9 +5,8 @@ struct RightNowCard: View {
     var instances: [DoseInstance]
     /// Yesterday's taken doses whose no-food window may still be running.
     var carryOver: [DoseInstance] = []
-    var onTaken: (DoseInstance) -> Void
+    var onTaken: (DoseInstance, Date) -> Void
     var onSkip: (DoseInstance) -> Void
-    var onTakenAt: (DoseInstance) -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -17,7 +16,8 @@ struct RightNowCard: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if let due = state.due.first {
                         DueDoseView(instance: due, extraDue: state.due.count - 1, now: context.date,
-                                    onTaken: onTaken, onSkip: onSkip, onTakenAt: onTakenAt)
+                                    onTaken: onTaken, onSkip: onSkip)
+                            .id(due.id)
                     } else if let next = state.next {
                         NextDoseView(instance: next, now: context.date)
                     } else if state.allDone {
@@ -89,7 +89,7 @@ private struct FoodStatusBand: View {
     @Environment(\.medsPerson) private var person
     var food: RightNowState.Food
     var now: Date
-    var onTaken: (DoseInstance) -> Void
+    var onTaken: (DoseInstance, Date) -> Void
 
     var body: some View {
         switch food {
@@ -111,7 +111,7 @@ private struct FoodStatusBand: View {
                     Spacer(minLength: 0)
                 }
                 Button {
-                    onTaken(instance)
+                    onTaken(instance, .now)
                 } label: {
                     Label("Haven't eaten since \(emptySince.formatted(date: .omitted, time: .shortened))? Take it now", systemImage: "checkmark")
                         .font(.bloom(.subheadline, weight: .semibold))
@@ -219,9 +219,18 @@ private struct DueDoseView: View {
     var instance: DoseInstance
     var extraDue: Int
     var now: Date
-    var onTaken: (DoseInstance) -> Void
+    var onTaken: (DoseInstance, Date) -> Void
     var onSkip: (DoseInstance) -> Void
-    var onTakenAt: (DoseInstance) -> Void
+
+    private enum When: Equatable {
+        case now
+        case planned
+        case picked(Date)
+    }
+
+    @State private var when: When = .now
+    @State private var picking = false
+    @State private var pickedTime: Date = .now
 
     var body: some View {
         let med = instance.medication
@@ -246,30 +255,37 @@ private struct DueDoseView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    onTaken(instance)
+                    picking = false
+                    onTaken(instance, takenTime)
                 } label: {
                     Label("Taken", systemImage: "checkmark")
                 }
                 .buttonStyle(BloomPrimaryButtonStyle())
+                .accessibilityIdentifier("rightnow-taken")
 
-                Button {
-                    onSkip(instance)
-                } label: {
-                    Text("Skip")
-                        .frame(minWidth: 64)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(BloomSoftButtonStyle())
+                timeChip
+            }
+
+            if picking {
+                DatePicker("Taken at", selection: $pickedTime, in: pickRange, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, maxHeight: 140)
+                    .clipped()
+                    .onChange(of: pickedTime) { _, new in when = .picked(new) }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .accessibilityIdentifier("rightnow-wheel")
             }
 
             HStack {
                 Button {
-                    onTakenAt(instance)
+                    onSkip(instance)
                 } label: {
-                    Text("Took it at a different time")
+                    Text("Skip")
                         .font(.bloom(.subheadline))
-                        .foregroundStyle(Theme.blushDeep)
                 }
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
+                .accessibilityIdentifier("rightnow-skip")
                 Spacer()
                 if extraDue > 0 {
                     Text("+\(extraDue) more due")
@@ -278,6 +294,69 @@ private struct DueDoseView: View {
                 }
             }
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picking)
+    }
+
+    /// "Now" · "Planned (8:00 AM)" · "Pick a time…"
+    private var timeChip: some View {
+        Menu {
+            Button { choose(.now) } label: { Label("Now", systemImage: "clock") }
+            if instance.scheduledAt <= now {
+                Button { choose(.planned) } label: {
+                    Label("Planned (\(instance.scheduledAt.formatted(date: .omitted, time: .shortened)))", systemImage: "calendar.badge.clock")
+                }
+            }
+            Button {
+                pickedTime = min(max(instance.scheduledAt, pickRange.lowerBound), pickRange.upperBound)
+                when = .picked(pickedTime)
+                picking = true
+                Haptics.select()
+            } label: { Label("Pick a time…", systemImage: "clock.arrow.circlepath") }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(chipText)
+                    .font(.bloom(.subheadline, weight: .semibold))
+                    .monospacedDigit()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(Theme.blushDeep)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 50)
+            .background(Theme.blushSoft, in: .rect(cornerRadius: 12, style: .continuous))
+        }
+        .fixedSize()
+        .accessibilityLabel("Taken time, \(chipText)")
+        .accessibilityIdentifier("rightnow-time")
+    }
+
+    private func choose(_ value: When) {
+        when = value
+        picking = false
+        Haptics.select()
+    }
+
+    private var chipText: String {
+        switch when {
+        case .now: "Now"
+        case .planned: instance.scheduledAt.formatted(date: .omitted, time: .shortened)
+        case .picked(let d): d.formatted(date: .omitted, time: .shortened)
+        }
+    }
+
+    private var takenTime: Date {
+        switch when {
+        case .now: .now
+        case .planned: instance.scheduledAt
+        case .picked(let d): min(d, .now)
+        }
+    }
+
+    private var pickRange: ClosedRange<Date> {
+        let start = PregnancyMath.calendar.startOfDay(for: now)
+        return start...max(start, now)
     }
 
     private var subtitle: String {

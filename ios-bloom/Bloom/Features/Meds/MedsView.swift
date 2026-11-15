@@ -3,7 +3,6 @@ import SwiftUI
 enum MedsRoute: Hashable {
     case manage
     case schedule(MedOwner)
-    case editor(UUID)
 }
 
 /// Meds tab: day picker, Right now card and the day as one time-ordered list.
@@ -15,7 +14,8 @@ struct MedsView: View {
     @State private var showEditor = false
     @State private var editingMedication: Medication?
     @State private var editorToken = UUID()
-    @State private var takenAtInstance: DoseInstance?
+    /// A row is being dragged: the list stops scrolling.
+    @State private var rowDragging = false
     /// Whose meds are on screen when shared (nil = the default for this viewer).
     @State private var personChoice: MedOwner?
     @State private var showQuiz = false
@@ -107,8 +107,6 @@ struct MedsView: View {
                     ManageMedsView(onEdit: { openEditor($0) }, onAdd: { startAdd() })
                 case .schedule(let who):
                     TemplatesView(owner: who)
-                case .editor(let id):
-                    ScheduleEditorView(templateID: id)
                 }
             }
         }
@@ -130,9 +128,6 @@ struct MedsView: View {
                 path.append(MedsRoute.schedule(owner))
             })
         }
-        .sheet(item: $store.reschedule) { proposal in
-            OffScheduleSheet(proposal: proposal)
-        }
         .inspector(isPresented: $showEditor) {
             Group {
                 if let editingMedication {
@@ -144,11 +139,6 @@ struct MedsView: View {
             .id(editorToken)
             .inspectorColumnWidth(min: 340, ideal: 380, max: 440)
             .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $takenAtInstance) { instance in
-            TakenAtSheet(instance: instance) { time in
-                store.markTaken(instance, at: time)
-            }
         }
         .overlay(alignment: .bottom) {
             // A finished part of the day shows a short inline line first, then the undo toast.
@@ -204,19 +194,25 @@ struct MedsView: View {
                 .frame(maxWidth: 560)
                 .frame(maxWidth: .infinity)
             }
+            .scrollDisabled(rowDragging)
         } secondary: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    listHeader(large: true)
-                    dayList(instances)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        listHeader(large: true)
+                        dayList(instances)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .padding(.bottom, 80)
+                    .frame(maxWidth: 560)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-                .padding(.bottom, 80)
-                .frame(maxWidth: 560)
-                .frame(maxWidth: .infinity)
+                .scrollDisabled(rowDragging)
+                .modifier(RevealRowPanel(proxy: proxy))
             }
         } compact: {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 22) {
                     personSwitcher
@@ -234,7 +230,14 @@ struct MedsView: View {
                 .frame(maxWidth: 640)
                 .frame(maxWidth: .infinity)
             }
+            .scrollDisabled(rowDragging)
+            .modifier(RevealRowPanel(proxy: proxy))
+            }
             .background(BloomBackground())
+        }
+        .onChange(of: store.scheduleChange?.id) { _, id in
+            // A panel only appears once a drag or edit has finished.
+            if id != nil { rowDragging = false }
         }
     }
 
@@ -244,14 +247,47 @@ struct MedsView: View {
                 .font(.bloom(large ? .title2 : .title3, weight: .semibold))
                 .foregroundStyle(Theme.text)
             Spacer()
-            if let template = store.template(for: owner, on: selectedDay) {
-                NavigationLink(value: MedsRoute.editor(template.id)) {
-                    Text("\(ScheduleTemplate.daysLabel(template.days)) routine")
-                        .font(.bloom(.subheadline))
-                        .foregroundStyle(Theme.blushDeep)
+            routineMenu
+        }
+    }
+
+    /// "Weekdays routine": on today, switch today to another routine; otherwise open Routines.
+    @ViewBuilder
+    private var routineMenu: some View {
+        if let active = store.activeTemplate(for: owner, on: selectedDay) {
+            let all = store.templates(for: owner)
+            Menu {
+                if isToday, all.count > 1 {
+                    Section("Today follows") {
+                        ForEach(all) { t in
+                            Button {
+                                store.switchRoutine(owner, on: selectedDay, to: t)
+                            } label: {
+                                if t.id == active.id {
+                                    Label("\(t.displayName) routine", systemImage: "checkmark")
+                                } else {
+                                    Text("\(t.displayName) routine")
+                                }
+                            }
+                            .accessibilityIdentifier("switch-routine-\(t.displayName)")
+                        }
+                    }
                 }
-                .accessibilityIdentifier("meds-open-routine")
+                Button {
+                    path.append(MedsRoute.schedule(owner))
+                } label: {
+                    Label("Edit routines", systemImage: "slider.horizontal.3")
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("\(active.displayName) routine")
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.bloom(.subheadline))
+                .foregroundStyle(Theme.blushDeep)
             }
+            .accessibilityIdentifier("meds-open-routine")
         }
     }
 
@@ -264,9 +300,11 @@ struct MedsView: View {
             instances: instances,
             meals: store.meals(for: owner, on: selectedDay),
             day: selectedDay,
+            owner: owner,
             canLog: !isFuture,
             now: isToday ? store.now : nil,
-            actions: doseActions
+            actions: doseActions,
+            onDragging: { rowDragging = $0 }
         )
     }
 
@@ -311,13 +349,20 @@ struct MedsView: View {
     @ViewBuilder
     private func overview(_ instances: [DoseInstance]) -> some View {
         if isToday {
-            RightNowCard(
-                instances: instances,
-                carryOver: visibleCarryOver,
-                onTaken: { store.markTaken($0) },
-                onSkip: { store.skip($0) },
-                onTakenAt: { takenAtInstance = $0 }
-            )
+            VStack(spacing: 12) {
+                RightNowCard(
+                    instances: instances,
+                    carryOver: visibleCarryOver,
+                    onTaken: { store.markTaken($0, at: $1, placement: .top) },
+                    onSkip: { store.skip($0) }
+                )
+                if let change = store.scheduleChange, change.placement == .top,
+                   cal.isDate(change.date, inSameDayAs: selectedDay), person == nil || change.owner == person {
+                    ScheduleChangePanel(change: change)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
         } else {
             DaySummaryCard(day: selectedDay, instances: instances, isFuture: isFuture)
         }
@@ -325,17 +370,11 @@ struct MedsView: View {
 
     private var doseActions: DoseActions {
         DoseActions(
-            taken: { store.markTaken($0, at: defaultTakenTime(for: $0)) },
-            takenAt: { takenAtInstance = $0 },
+            taken: { store.markTaken($0, at: $1, placement: .row($0.medication.id)) },
             skip: { store.skip($0) },
             undo: { store.undo($0) },
             edit: { med in openEditor(store.medications.first { $0.id == med.id } ?? med) }
         )
-    }
-
-    /// "Taken now" on a past day means the planned time; today it means right now.
-    private func defaultTakenTime(for instance: DoseInstance) -> Date {
-        cal.isDate(instance.scheduledAt, inSameDayAs: .now) ? .now : instance.scheduledAt
     }
 
     private var emptyState: some View {
@@ -476,6 +515,26 @@ private struct UndoToastView: View {
         .task {
             try? await Task.sleep(for: .seconds(8))
             onExpire()
+        }
+    }
+}
+
+/// Scrolls a schedule-change panel that opens under a list row into view, so it is
+/// never left below the screen edge (on the open iPhone Duo the list fills its pane).
+private struct RevealRowPanel: ViewModifier {
+    var proxy: ScrollViewProxy
+    @Environment(AppStore.self) private var store
+
+    func body(content: Content) -> some View {
+        content.onChange(of: store.scheduleChange?.id) { _, id in
+            guard id != nil, let change = store.scheduleChange,
+                  case .row = change.placement else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                withAnimation(.smooth(duration: 0.4)) {
+                    proxy.scrollTo(ScheduleChangePanel.scrollID, anchor: .bottom)
+                }
+            }
         }
     }
 }

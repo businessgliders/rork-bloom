@@ -381,23 +381,26 @@ struct MedsBoxView: View {
 
     @ViewBuilder
     private var doneStep: some View {
-        let template = store.template(for: owner, on: store.now)
+        let template = store.activeTemplate(for: owner, on: store.now)
+        let violations = template.map { store.violations(in: $0) } ?? self.violations
         VStack(alignment: .leading, spacing: 6) {
             Text(violations.isEmpty ? "All rules fit" : "Almost there")
                 .font(.bloom(.largeTitle, weight: .bold))
                 .foregroundStyle(Theme.text)
-            Text(violations.isEmpty ? "Every dose is at the earliest time that keeps all your rules." : "Some rules can't all fit in this routine. Here's exactly which, and the closest fix.")
+            Text(violations.isEmpty ? "Every dose is at the earliest time that keeps all your rules." : "Some rules can't all fit in this routine. Here's which, with fixes that keep every rule.")
                 .font(.bloom(.subheadline))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
         ForEach(violations) { v in
-            ViolationCard(violation: v)
+            if let template {
+                RuleProblemCard(template: template, violation: v)
+            }
         }
 
         if let template {
-            section(ScheduleTemplate.daysLabel(template.days)) {
+            section("\(template.displayName) routine") {
                 ForEach(template.doses.sorted { $0.time < $1.time }) { dose in
                     HStack {
                         Text(dose.time.date(on: .now).formatted(date: .omitted, time: .shortened))
@@ -543,28 +546,5 @@ struct MedsBoxView: View {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn't read the box. Try again with it flat and well lit, or type it in."
             }
         }
-    }
-}
-
-/// A broken rule in words, with the closest fix.
-struct ViolationCard: View {
-    var violation: RuleViolation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(violation.message, systemImage: "exclamationmark.triangle.fill")
-                .font(.bloom(.subheadline, weight: .semibold))
-                .foregroundStyle(Theme.coralDeep)
-                .fixedSize(horizontal: false, vertical: true)
-            if let fix = violation.fix {
-                Text(fix)
-                    .font(.bloom(.footnote, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.coralSoft, in: .rect(cornerRadius: 18, style: .continuous))
     }
 }

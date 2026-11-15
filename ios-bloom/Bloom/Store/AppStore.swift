@@ -189,7 +189,7 @@ final class AppStore {
     var rules: [ScheduleRule] = []
     var overrides: [DayOverride] = []
     /// Set after a dose is taken off-schedule; Today asks "Just today" or "Update my template".
-    var reschedule: RescheduleProposal?
+    var scheduleChange: ScheduleChange?
 
     /// Modification date of the state file as last read or written by this process.
     private var knownFileDate: Date?
@@ -491,10 +491,10 @@ final class AppStore {
     // MARK: - Dose logging
 
     /// Marks a dose taken. `at` is the real moment it was taken; food windows count from it.
-    func markTaken(_ instance: DoseInstance, at takenAt: Date = .now) {
+    func markTaken(_ instance: DoseInstance, at takenAt: Date = .now, placement: ScheduleChange.Placement = .top) {
         let wasComplete = isSlotComplete(for: instance)
         setLog(for: instance, status: .taken, takenAt: takenAt)
-        proposeRescheduleIfNeeded(after: instance, takenAt: takenAt)
+        proposeAfterLogging(instance, placement: placement)
         Haptics.success()
         let late = Int((takenAt.timeIntervalSince(instance.scheduledAt) / 60).rounded())
         undoToast = UndoToast(
@@ -714,7 +714,7 @@ final class AppStore {
         templates = []
         rules = []
         overrides = []
-        reschedule = nil
+        scheduleChange = nil
         followModes = [:]
         pendingOps = []
         onboardingComplete = false
@@ -1035,7 +1035,7 @@ final class AppStore {
         templates = []
         rules = []
         overrides = []
-        reschedule = nil
+        scheduleChange = nil
         aiLookupConsent = nil
         celebration = nil
         undoToast = nil
