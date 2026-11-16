@@ -46,6 +46,26 @@ enum Theme {
     static let ringTrack = Color(light: 0xF1E5DA, dark: 0x3B2F2C)
 
     static let cardRadius: CGFloat = 28
+
+    // MARK: Day list (boards, 2026-11-16)
+    static let dayCanvas = Color(light: 0xFBF5EE, dark: 0x1F1917)
+    static let dayCard = Color(light: 0xFFFFFF, dark: 0x2A2220)
+    static let dayDivider = Color(light: 0xEFE6DC, dark: 0x3A302C)
+    static let dayText = Color(light: 0x3A2C2A, dark: 0xF4EAE4)
+    static let daySecondary = Color(light: 0x6F5F59, dark: 0xC2B2AA)
+    static let dayMuted = Color(light: 0x8A7A73, dark: 0x9C8C85)
+    static let rose = Color(light: 0xA8385A, dark: 0xE58AA2)
+    static let roseTint = Color(light: 0xF6E3E6, dark: 0x43262E)
+    static let greenDot = Color(light: 0x5E8A5A, dark: 0x8DB688)
+    static let greenCheck = Color(light: 0x4A7347, dark: 0x6E9E69)
+    static let greenTint = Color(light: 0xE1ECD9, dark: 0x26352A)
+    static let greenText = Color(light: 0x35592F, dark: 0xB9D8B2)
+    static let terraDot = Color(light: 0xB5502F, dark: 0xE08A68)
+    static let terraTint = Color(light: 0xF7E1D8, dark: 0x42281F)
+    static let terraText = Color(light: 0x8F3D22, dark: 0xF0A98C)
+    static let neutralDot = Color(light: 0xC9B8A8, dark: 0x6E625B)
+    static let creamBox = Color(light: 0xF8F0E6, dark: 0x332926)
+    static let dayRadius: CGFloat = 20
     static let confettiColors: [Color] = [blush, peach, sage, butter, coral]
 }
 

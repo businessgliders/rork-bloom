@@ -295,7 +295,7 @@ final class SyncEngine {
         let ch = Backend.client.channel("bloom-\(pregnancyID.uuidString.lowercased())")
         // Unfiltered: delete events can't be filtered and only carry the primary key. RLS limits rows to this pregnancy.
         for table in ["pregnancies", "pregnancy_members", "milestones", "medications", "dose_logs", "medication_follows",
-                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines"] {
+                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines", "med_texts"] {
             let stream = ch.postgresChange(AnyAction.self, schema: "public", table: table)
             realtimeTasks.append(Task {
                 for await _ in stream { SyncEngine.shared.requestPull() }
@@ -384,12 +384,16 @@ final class SyncEngine {
             .select("id, taker_id, local_date, template_id, wake_time, bed_time, meals")
             .eq("pregnancy_id", value: pid)
             .gte("local_date", value: SyncFormat.day(PregnancyMath.addDays(-1, to: .now))).execute().value
-        let remote = try await RemoteState(
+        // Missing table or no rows: texts stay as they are on this phone.
+        let medTexts: [RemoteMedTextRow] = (try? await client.from("med_texts")
+            .select("taker_id, text, updated_by, updated_at").eq("pregnancy_id", value: pid).execute().value) ?? []
+        var remote = try await RemoteState(
             pregnancy: pregnancy, members: members, milestones: milestones, medications: meds,
             follows: follows, doses: doses, doseWindowStart: windowStart,
             templates: templates, templateItems: items, rules: rules, overrideDoses: overrides,
             dayRoutines: dayRoutines
         )
+        remote.medTexts = medTexts
         // A partner who just joined makes queued partner meds sendable.
         let hadPartner = store.account?.partnerJoined ?? false
         store.applyRemote(remote)
@@ -572,6 +576,17 @@ final class SyncEngine {
                     .eq("scheduled_for", value: SyncFormat.timestamp(scheduled))
                     .execute()
             }
+
+        case .medText:
+            guard let owner = MedOwner(rawValue: op.key), let text = store.medsText[owner] else { return }
+            guard let takerID = store.memberID(for: owner) else { throw Deferred() }
+            try await client.from("med_texts").upsert([
+                "pregnancy_id": AnyJSON.string(pid.uuidString),
+                "taker_id": .string(takerID.uuidString),
+                "text": .string(text),
+                "updated_by": .string(account.userID.uuidString),
+                "updated_at": .string(SyncFormat.timestamp(store.medsTextEditedAt(owner) ?? .now)),
+            ], onConflict: "pregnancy_id,taker_id").execute()
         }
     }
 

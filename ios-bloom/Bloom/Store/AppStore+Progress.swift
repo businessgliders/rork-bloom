@@ -1,0 +1,136 @@
+import Foundation
+
+/// One fact on How it's going. Factual, never scolding.
+struct ProgressObservation: Identifiable, Equatable {
+    enum Kind: Equatable { case onTime, late(UUID), unlogged }
+    var kind: Kind
+    var title: String
+    var detail: String
+    var id: String { title }
+}
+
+/// Counts for Meds today, the week strip and How it's going. Computed on the phone from logs and the plan.
+extension AppStore {
+    /// The signed-in person's meds; if they take none, the partner's day.
+    var medsPerson: MedOwner {
+        let me = viewerRole
+        if medications.contains(where: { $0.owner == me }) { return me }
+        let other: MedOwner = me == .mom ? .partner : .mom
+        if medications.contains(where: { $0.owner == other }) { return other }
+        return me
+    }
+
+    func meds(of owner: MedOwner) -> [Medication] {
+        medications.filter { $0.owner == owner }
+    }
+
+    func instances(_ owner: MedOwner, on day: Date) -> [DoseInstance] {
+        MedsEngine.instances(on: day, medications: meds(of: owner), logs: doseLogs)
+    }
+
+    /// A day counts when every planned dose is logged as taken or skipped.
+    private func isComplete(_ list: [DoseInstance]) -> Bool {
+        !list.isEmpty && list.allSatisfy { !$0.isPending }
+    }
+
+    /// Current run of complete days (today counts once it is complete) and the best run.
+    func streak(_ owner: MedOwner) -> (current: Int, best: Int) {
+        let mine = meds(of: owner)
+        guard let earliest = mine.map(\.startDate).min() else { return (0, 0) }
+        let cal = PregnancyMath.calendar
+        let today = cal.startOfDay(for: now)
+        let first = max(cal.startOfDay(for: earliest), PregnancyMath.addDays(-365, to: today))
+        var day = first
+        var run = 0
+        var best = 0
+        var current = 0
+        while day <= today {
+            let list = MedsEngine.instances(on: day, medications: mine, logs: doseLogs)
+            let isToday = day == today
+            if list.isEmpty {
+                // Nothing planned: neither adds nor breaks.
+            } else if isComplete(list) {
+                run += 1
+            } else if !isToday {
+                run = 0
+            }
+            best = max(best, run)
+            current = run
+            day = PregnancyMath.addDays(1, to: day)
+        }
+        return (current, best)
+    }
+
+    /// Logged and planned doses over the last 7 days (today included), and how many were taken on time.
+    func weekCounts(_ owner: MedOwner) -> (logged: Int, planned: Int, onTime: Int) {
+        var logged = 0, planned = 0, onTime = 0
+        for list in lastDays(owner, count: 7) {
+            planned += list.count
+            logged += list.filter { !$0.isPending }.count
+            onTime += list.filter { $0.isTaken && abs($0.minutesLate ?? 0) <= 30 }.count
+        }
+        return (logged, planned, onTime)
+    }
+
+    /// The last `count` days, oldest first, each as its dose instances.
+    func lastDays(_ owner: MedOwner, count: Int) -> [[DoseInstance]] {
+        let today = PregnancyMath.calendar.startOfDay(for: now)
+        return (0..<count).reversed().map { instances(owner, on: PregnancyMath.addDays(-$0, to: today)) }
+    }
+
+    /// Green dot = all logged, sand = some logged, nil = nothing logged or nothing planned.
+    func dayMark(_ owner: MedOwner, on day: Date) -> Bool? {
+        let list = instances(owner, on: day)
+        guard !list.isEmpty else { return nil }
+        let done = list.filter { !$0.isPending }.count
+        if done == list.count { return true }
+        return done > 0 ? false : nil
+    }
+
+    /// Up to three facts from the last week.
+    func observations(_ owner: MedOwner) -> [ProgressObservation] {
+        var out: [ProgressObservation] = []
+        let days = lastDays(owner, count: 7)
+        let past = days.dropLast()
+
+        // On-time run, counted back from yesterday (today joins once its doses are all on time).
+        var run = 0
+        for list in days.reversed() {
+            let taken = list.filter(\.isTaken)
+            let isToday = list.first.map { PregnancyMath.calendar.isDate($0.scheduledAt, inSameDayAs: now) } ?? false
+            if list.isEmpty { continue }
+            if taken.count == list.count, taken.allSatisfy({ abs($0.minutesLate ?? 0) <= 30 }) { run += 1 }
+            else if isToday { continue } else { break }
+        }
+        if run >= 2 {
+            out.append(.init(kind: .onTime, title: "\(run) days in a row on time",
+                             detail: "Every dose was taken within 30 minutes of its planned time."))
+        }
+
+        // A medication often taken late.
+        var lateBy: [UUID: [Int]] = [:]
+        var names: [UUID: String] = [:]
+        for list in past {
+            for i in list where i.isTaken {
+                if let late = i.minutesLate, late > 30 {
+                    lateBy[i.medication.id, default: []].append(late)
+                    names[i.medication.id] = i.medication.shortName
+                }
+            }
+        }
+        if let (id, lates) = lateBy.max(by: { $0.value.count < $1.value.count }), lates.count >= 3, let name = names[id] {
+            let avg = lates.reduce(0, +) / lates.count
+            let amount = avg >= 90 ? "about \(Int((Double(avg) / 60).rounded())) h" : "about \(Int((Double(avg) / 5).rounded()) * 5) min"
+            out.append(.init(kind: .late(id), title: "\(name) is often later than planned",
+                             detail: "Taken \(amount) late on \(lates.count) of the last 6 days."))
+        }
+
+        // Doses not logged this week (before now).
+        let missing = days.flatMap { $0 }.filter { $0.isPending && $0.scheduledAt < now.addingTimeInterval(-3600) }.count
+        if missing > 0 {
+            out.append(.init(kind: .unlogged, title: missing == 1 ? "1 dose not logged this week" : "\(missing) doses not logged this week",
+                             detail: "If you took them, you can still log them from that day."))
+        }
+        return Array(out.prefix(3))
+    }
+}

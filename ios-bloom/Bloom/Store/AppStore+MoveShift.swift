@@ -29,6 +29,17 @@ struct MovePlan: Equatable {
     var routineName: String
 }
 
+/// Where a dragged medication can be dropped (board 3).
+struct DropBands: Equatable {
+    var medicationID: UUID
+    var current: Int
+    /// The green band. nil = nothing else fits on this day.
+    var safe: ClosedRange<Int>?
+    var options: [Int: MoveOption]
+    var beforeReason: String?
+    var afterReason: String?
+}
+
 extension AppStore {
     // MARK: - Linked medications
 
@@ -200,6 +211,58 @@ extension AppStore {
         )
         scheduleChange = change
         applyChange(scope)
+    }
+
+    // MARK: - Drag bands (Meds & routines)
+
+    /// Where a dragged medication can land on `day`, at 5-minute steps: the green band around its time
+    /// and a one-line reason for each side.
+    func dropBands(owner: MedOwner, day: Date, medicationID id: UUID) -> DropBands? {
+        guard let s = dayState(owner, on: day), let current = s.times[id], !s.fixed.contains(id) else { return nil }
+        let names = medicationNames
+        let past = Set(s.times.filter { !s.fixed.contains($0.key) && $0.key != id && $0.value < s.range.lowerBound }.keys)
+        let deps = dependents(of: id, owner: owner).filter { s.times[$0] != nil && !s.fixed.contains($0) && !past.contains($0) }
+        let routine = s.routine
+        let step = ScheduleEngine.step
+        let first = (s.range.lowerBound + step - 1) / step * step
+        var options: [Int: MoveOption] = [:]
+        if first <= s.range.upperBound {
+            for t in stride(from: first, through: s.range.upperBound, by: step) {
+                if let o = option(owner: owner, state: s, id: id, current: current, to: t, deps: deps, past: past,
+                                  routine: routine, names: names) {
+                    options[t] = o
+                }
+            }
+        }
+        // The run of valid times around (or nearest to) where it is now.
+        let snapped = ScheduleEngine.roundNearest(current)
+        let seed = options.keys.min { abs($0 - snapped) < abs($1 - snapped) }
+        var safe: ClosedRange<Int>?
+        if let seed {
+            var lo = seed, hi = seed
+            while options[lo - step] != nil { lo -= step }
+            while options[hi + step] != nil { hi += step }
+            safe = lo...hi
+        }
+        func reason(at t: Int) -> String {
+            if t < s.range.lowerBound {
+                return PregnancyMath.calendar.isDateInToday(day) && t >= s.wake ? "Already past" : "Before you wake"
+            }
+            if t > s.range.upperBound { return "After bedtime" }
+            var times = s.times
+            times[id] = t
+            for d in deps { if let m = times[d] { times[d] = m + (t - current) } }
+            let open = openRules(owner, times: times, adjacent: s.adjacent, fixed: s.fixed, mealsChanged: false)
+            let broken = ScheduleEngine.violations(times: times, routine: routine, rules: open, names: names)
+                .filter { $0.rule.involves(id) || deps.contains(where: $0.rule.involves) }
+            if let v = broken.first { return ScheduleEngine.shortReason(v) }
+            return "Another rule can't be kept"
+        }
+        return DropBands(
+            medicationID: id, current: current, safe: safe, options: options,
+            beforeReason: safe.map { reason(at: $0.lowerBound - step) },
+            afterReason: safe.map { reason(at: $0.upperBound + step) }
+        )
     }
 
     // MARK: - Shift my day

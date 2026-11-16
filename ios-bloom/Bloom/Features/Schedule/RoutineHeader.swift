@@ -5,6 +5,8 @@ import SwiftUI
 struct RoutineHeader: View {
     var owner: MedOwner
     @Binding var selectedRoutine: UUID?
+    /// The old wake / meals / bed cards. Meds & routines and the editor show those times in the list instead.
+    var showTimeCards = true
 
     @Environment(AppStore.self) private var store
 
@@ -69,7 +71,7 @@ struct RoutineHeader: View {
         if let t = routine {
             VStack(alignment: .leading, spacing: 12) {
                 routineChips(selected: t)
-                timeCards(t)
+                if showTimeCards { timeCards(t) }
                 if let change = store.scheduleChange, change.placement == .routine(t.id) {
                     ScheduleChangePanel(change: change)
                         .transition(.opacity.combined(with: .move(edge: .top)))
@@ -120,23 +122,25 @@ struct RoutineHeader: View {
                     } label: {
                         HStack(spacing: 5) {
                             if t.id == todayID {
-                                Circle().fill(on ? Color.white : Theme.blushDeep).frame(width: 6, height: 6)
+                                Circle().fill(on ? Color.white : Theme.rose).frame(width: 6, height: 6)
                                     .accessibilityLabel("Today")
                             }
                             Text(t.displayName)
                             if !store.violations(in: t).isEmpty {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(on ? .white : Theme.coralDeep)
+                                    .foregroundStyle(on ? .white : Theme.terraDot)
                                     .accessibilityLabel("A rule can't be met")
                             }
                         }
-                        .font(.bloom(.subheadline, weight: .semibold))
-                        .foregroundStyle(on ? .white : Theme.text)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(on ? Theme.roseButton : Theme.surface, in: .capsule)
-                        .overlay(Capsule().stroke(on ? .clear : Theme.ringTrack, lineWidth: 1))
+                        .font(.system(size: 15, weight: on ? .semibold : .regular))
+                        .foregroundStyle(on ? .white : Theme.dayText)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 36)
+                        .background(on ? Theme.rose : Theme.dayCard, in: .capsule)
+                        .overlay(Capsule().stroke(on ? .clear : Theme.dayDivider, lineWidth: 1))
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
                     }
                     .buttonStyle(PressableStyle())
                     .accessibilityIdentifier("routine-\(t.displayName)")
@@ -160,10 +164,12 @@ struct RoutineHeader: View {
                     showQuiz = true
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Theme.blushDeep)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.rose)
                         .frame(width: 36, height: 36)
-                        .background(Theme.blushSoft, in: .circle)
+                        .background(Theme.roseTint, in: .circle)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(PressableStyle())
                 .accessibilityLabel("New routine")

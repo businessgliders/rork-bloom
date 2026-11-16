@@ -82,3 +82,76 @@ struct WidgetChip: View {
         .background(fill, in: .capsule)
     }
 }
+
+// MARK: - Day style (boards 8, 9)
+
+/// The day tokens fixed to the widget's colour scheme, so an archived widget can't pick the wrong one.
+struct DayPalette {
+    let scheme: ColorScheme
+    func c(_ color: Color) -> Color { color.fixed(scheme) }
+    var canvas: Color { c(Theme.dayCanvas) }
+    var card: Color { c(Theme.dayCard) }
+    var divider: Color { c(Theme.dayDivider) }
+    var text: Color { c(Theme.dayText) }
+    var secondary: Color { c(Theme.daySecondary) }
+    var muted: Color { c(Theme.dayMuted) }
+    var rose: Color { c(Theme.rose) }
+    var roseTint: Color { c(Theme.roseTint) }
+    var green: Color { c(Theme.greenDot) }
+    var greenCheck: Color { c(Theme.greenCheck) }
+    var greenTint: Color { c(Theme.greenTint) }
+    var greenText: Color { c(Theme.greenText) }
+    var terra: Color { c(Theme.terraDot) }
+    var terraTint: Color { c(Theme.terraTint) }
+    var terraText: Color { c(Theme.terraText) }
+    var neutral: Color { c(Theme.neutralDot) }
+}
+
+/// A 9 pt status dot.
+struct WidgetDot: View {
+    var color: Color
+    var size: CGFloat = 9
+    var body: some View {
+        Circle().fill(color).frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
+/// A thin capsule progress bar.
+struct WidgetBar: View {
+    var progress: Double
+    var fill: Color
+    var track: Color
+    var height: CGFloat = 6
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(track)
+                Capsule().fill(fill)
+                    .frame(width: max(height, proxy.size.width * min(max(progress, 0), 1)))
+                    .opacity(progress <= 0 ? 0 : 1)
+                    .widgetAccentable()
+            }
+        }
+        .frame(height: height)
+    }
+}
+
+/// A rose progress ring (Journey).
+struct DayRing: View {
+    var progress: Double
+    var color: Color
+    var track: Color
+    var lineWidth: CGFloat = 6
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(track, lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: min(max(progress, 0.001), 1))
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .widgetAccentable()
+        }
+    }
+}

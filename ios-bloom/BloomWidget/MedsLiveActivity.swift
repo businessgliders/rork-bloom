@@ -58,7 +58,7 @@ private struct ActivityModel {
     }
 
     var subline: String {
-        if allCaughtUp { return "\(state.resolved) of \(state.total) doses logged 🌷" }
+        if allCaughtUp { return "\(state.resolved) of \(state.total) doses logged" }
         if let dose = state.dose, doseDue {
             let detail = dose.detail.trimmingCharacters(in: .whitespaces)
             let since = "since \(dose.scheduledAt.formatted(date: .omitted, time: .shortened))"
@@ -67,20 +67,17 @@ private struct ActivityModel {
         if windowRunning, let end = state.windowEnd {
             return "Eat again at \(end.formatted(date: .omitted, time: .shortened))"
         }
-        if windowJustEnded { return person == nil ? "Your no-food window is over 🍽️" : "The no-food window is over 🍽️" }
+        if windowJustEnded { return person == nil ? "Your no-food window is over" : "The no-food window is over" }
         if let dose = state.dose { return "at \(dose.scheduledAt.formatted(date: .omitted, time: .shortened))" }
         return ""
     }
 
-    var emoji: String {
-        if allCaughtUp { return "🌷" }
-        if windowRunning && !doseDue { return "⏳" }
-        if windowJustEnded && !doseDue { return "🍽️" }
-        return state.dose?.emoji ?? "💊"
+    /// Terracotta while food waits, rose for a dose, green when done.
+    var accent: Color {
+        if windowRunning && !doseDue { return Theme.terraDot }
+        if allCaughtUp || windowJustEnded { return Theme.greenDot }
+        return Theme.rose
     }
-
-    var accent: Color { windowRunning && !doseDue ? Theme.coral : (allCaughtUp || windowJustEnded ? Theme.sage : Theme.blush) }
-    var accentSoft: Color { windowRunning && !doseDue ? Theme.coralSoft : (allCaughtUp || windowJustEnded ? Theme.sageSoft : Theme.blushSoft) }
 }
 
 /// Colours for the activity in the current rendering mode.
@@ -110,12 +107,12 @@ private struct ActivityPalette {
 
     func color(_ color: Color) -> Color? { fullColor ? color.fixed(scheme) : nil }
 
-    var card: Color? { color(Theme.canvas) }
-    var headline: AnyShapeStyle { style(Theme.text, else: .primary) }
-    /// Small caption and time text: the deepest secondary tone, primary when tinted.
-    var caption: AnyShapeStyle { style(Theme.textCaption, else: .primary) }
+    var card: Color? { color(Theme.dayCanvas) }
+    var headline: AnyShapeStyle { style(Theme.dayText, else: .primary) }
+    /// Small caption and time text: the secondary day tone, primary when tinted.
+    var caption: AnyShapeStyle { style(Theme.daySecondary, else: .primary) }
     func accentText(_ color: Color) -> AnyShapeStyle { style(color, else: .primary) }
-    func blob(_ color: Color) -> AnyShapeStyle { style(color, else: .quaternary) }
+    func dot(_ color: Color) -> AnyShapeStyle { style(color, else: .primary) }
     /// Text on the black island.
     func islandText(_ opacity: Double) -> AnyShapeStyle {
         fullColor ? AnyShapeStyle(Color.white.opacity(opacity)) : AnyShapeStyle(opacity < 1 ? HierarchicalShapeStyle.secondary : .primary)
@@ -132,8 +129,9 @@ struct MedsLiveActivity: Widget {
             let model = ActivityModel(context: context)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    IslandBlob(model: model)
-                        .padding(.leading, 4)
+                    IslandDot(model: model, size: 14)
+                        .padding(.leading, 8)
+                        .padding(.top, 6)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     IslandTrailing(model: model)
@@ -147,7 +145,7 @@ struct MedsLiveActivity: Widget {
                         .padding(.top, 4)
                 }
             } compactLeading: {
-                Text(model.emoji).font(.system(size: 16))
+                IslandDot(model: model, size: 10)
             } compactTrailing: {
                 CompactTrailing(model: model)
             } minimal: {
@@ -169,36 +167,41 @@ private struct LockScreenActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                EmojiBlob(emoji: model.emoji, size: 50, style: palette.blob(model.accentSoft))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Bloom · \(model.state.resolved)/\(model.state.total) today".uppercased())
-                        .font(.system(size: 12, weight: .heavy))
-                        .tracking(0.4)
-                        .foregroundStyle(palette.caption)
-                        .lineLimit(1)
-                        // Folded iPhone Duo is narrow: shrink a little before truncating.
-                        .minimumScaleFactor(0.8)
-                        .layoutPriority(1)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Circle().fill(palette.dot(model.accent)).frame(width: 9, height: 9)
+                            .widgetAccentable()
+                        Text("Bloom · \(model.state.resolved) of \(model.state.total) today")
+                            .font(.system(size: 13))
+                            .monospacedDigit()
+                            .foregroundStyle(palette.caption)
+                            .lineLimit(1)
+                            // Folded iPhone Duo is narrow: shrink a little before truncating.
+                            .minimumScaleFactor(0.8)
+                    }
+                    .layoutPriority(1)
                     model.headlineText
-                        .font(.bloom(.title3, weight: .heavy))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(palette.headline)
-                        .lineLimit(1)
+                        .lineLimit(2)
                         .minimumScaleFactor(0.75)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(model.subline)
-                        .font(.bloom(.subheadline, weight: .semibold))
+                        .font(.system(size: 15))
+                        .monospacedDigit()
                         .foregroundStyle(palette.caption)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .minimumScaleFactor(0.8)
                 }
                 Spacer(minLength: 4)
                 if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd, model.doseDue {
                     // Both a due dose and a running window: show the countdown here, the button below.
-                    timer(start...end, size: 22, color: Theme.coralDeep, maxWidth: 96)
+                    timer(start...end, size: 22, color: Theme.terraText, maxWidth: 96)
                 } else if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
-                    timer(start...end, size: 28, color: Theme.coralDeep, maxWidth: 112)
+                    timer(start...end, size: 32, color: Theme.terraDot, maxWidth: 120)
                 } else if let dose = model.state.dose, !model.doseDue {
-                    timer(Date.now...max(Date.now, dose.scheduledAt), size: 22, color: Theme.blushDeep, maxWidth: 96)
+                    timer(Date.now...max(Date.now, dose.scheduledAt), size: 22, color: Theme.rose, maxWidth: 96)
                 }
             }
             ActivityBottom(model: model, onIsland: false)
@@ -209,12 +212,12 @@ private struct LockScreenActivityView: View {
         // wallpaper on newer Lock Screens, which washed the text out.
         .background(palette.card ?? .clear)
         .activityBackgroundTint(palette.card)
-        .activitySystemActionForegroundColor(palette.color(Theme.blushDeep))
+        .activitySystemActionForegroundColor(palette.color(Theme.rose))
     }
 
     private func timer(_ range: ClosedRange<Date>, size: CGFloat, color: Color, maxWidth: CGFloat) -> some View {
         Text(timerInterval: range, countsDown: true)
-            .font(.system(size: size, weight: .heavy))
+            .font(.system(size: size, weight: .semibold))
             .monospacedDigit()
             .foregroundStyle(palette.accentText(color))
             .multilineTextAlignment(.trailing)
@@ -246,17 +249,17 @@ private struct ActivityBottom: View {
                 .buttonStyle(.plain)
                 if model.state.otherDueCount > 0 {
                     Text("+\(model.state.otherDueCount) more due")
-                        .font(.bloom(.caption, weight: .bold))
+                        .font(.caption)
                         .foregroundStyle(smallText)
                 }
             }
         } else if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             VStack(alignment: .leading, spacing: 4) {
-                ProgressView(timerInterval: start...end, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
-                    .tint(palette.color(Theme.coral))
+                ProgressView(timerInterval: start...end, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
+                    .tint(palette.color(Theme.terraDot))
                 if let reason = model.state.windowReason {
                     Text("Because of \(reason) · counted from when \(model.person ?? "you") took it")
-                        .font(.bloom(.caption, weight: .semibold))
+                        .font(.caption)
                         .foregroundStyle(smallText)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -264,20 +267,20 @@ private struct ActivityBottom: View {
             }
         } else if model.state.total > 0 {
             ProgressView(value: Double(model.state.resolved), total: Double(model.state.total))
-                .tint(palette.color(Theme.sage))
+                .tint(palette.color(Theme.greenDot))
         }
     }
 
     @ViewBuilder
     private var takenLabel: some View {
-        let label = Label("Taken", systemImage: "checkmark")
-            .font(.bloom(.headline, weight: .heavy))
+        let label = Text("Taken")
+            .font(.system(size: 17, weight: .semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
         if palette.fullColor {
             label
                 .foregroundStyle(.white)
-                .background(Theme.roseButton, in: .capsule)
+                .background(Theme.rose.fixed(onIsland ? .dark : colorScheme), in: .capsule)
         } else {
             // Tinted modes: an outlined capsule in the system tint, readable on any wallpaper.
             label
@@ -291,14 +294,19 @@ private struct ActivityBottom: View {
 
 // MARK: - Dynamic Island pieces
 
-private struct IslandBlob: View {
+/// The state dot: terracotta for a no-food window, rose for a dose, green when done.
+private struct IslandDot: View {
     var model: ActivityModel
+    var size: CGFloat
     @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
         let palette = ActivityPalette.island(mode: renderingMode)
-        EmojiBlob(emoji: model.emoji, size: 44,
-                  style: palette.fullColor ? AnyShapeStyle(model.accent.fixed(.dark).opacity(0.35)) : AnyShapeStyle(.quaternary))
+        Circle()
+            .fill(palette.dot(model.accent))
+            .frame(width: size, height: size)
+            .widgetAccentable()
+            .accessibilityHidden(true)
     }
 }
 
@@ -310,12 +318,13 @@ private struct IslandCenter: View {
         let palette = ActivityPalette.island(mode: renderingMode)
         VStack(alignment: .leading, spacing: 2) {
             model.headlineText
-                .font(.bloom(.headline, weight: .heavy))
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(palette.islandText(1))
-                .lineLimit(1)
+                .lineLimit(2)
                 .minimumScaleFactor(0.75)
             Text(model.subline)
-                .font(.bloom(.caption, weight: .semibold))
+                .font(.caption)
+                .monospacedDigit()
                 .foregroundStyle(palette.islandText(0.85))
                 .lineLimit(1)
         }
@@ -332,24 +341,24 @@ private struct IslandTrailing: View {
         if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(timerInterval: start...end, countsDown: true)
-                    .font(.system(size: 22, weight: .heavy))
+                    .font(.system(size: 22, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundStyle(palette.accentText(Theme.coral))
+                    .foregroundStyle(palette.accentText(Theme.terraDot))
                     .multilineTextAlignment(.trailing)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .frame(maxWidth: 88)
                 Text("no food")
-                    .font(.bloom(.caption2, weight: .bold))
+                    .font(.caption2)
                     .foregroundStyle(palette.islandText(0.8))
             }
         } else {
             VStack(alignment: .trailing, spacing: 0) {
                 Text("\(model.state.resolved)/\(model.state.total)")
-                    .font(.system(size: 22, weight: .heavy))
-                    .foregroundStyle(palette.accentText(Theme.sage))
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(palette.accentText(Theme.greenDot))
                 Text("today")
-                    .font(.bloom(.caption2, weight: .bold))
+                    .font(.caption2)
                     .foregroundStyle(palette.islandText(0.8))
             }
         }
@@ -364,24 +373,25 @@ private struct CompactTrailing: View {
         let palette = ActivityPalette.island(mode: renderingMode)
         if model.windowRunning, let start = model.state.windowStart, let end = model.state.windowEnd {
             Text(timerInterval: start...end, countsDown: true)
-                .font(.system(size: 14, weight: .heavy))
+                .font(.system(size: 14, weight: .semibold))
                 .monospacedDigit()
-                .foregroundStyle(palette.accentText(Theme.coral))
+                .foregroundStyle(palette.accentText(Theme.terraDot))
                 .multilineTextAlignment(.trailing)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(maxWidth: 56)
         } else if model.doseDue {
             Text("Due")
-                .font(.system(size: 14, weight: .heavy))
-                .foregroundStyle(palette.accentText(Theme.blush))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(palette.accentText(Theme.rose))
         } else if let dose = model.state.dose {
             Text(dose.scheduledAt, style: .time)
-                .font(.system(size: 13, weight: .heavy))
-                .foregroundStyle(palette.accentText(Theme.blush))
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(palette.accentText(Theme.rose))
                 .frame(maxWidth: 56)
         } else {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.accentText(Theme.sage))
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.accentText(Theme.greenCheck))
         }
     }
 }
@@ -395,12 +405,12 @@ private struct IslandMinimal: View {
             ProgressView(timerInterval: start...end, countsDown: true) {
                 EmptyView()
             } currentValueLabel: {
-                Text(model.emoji).font(.system(size: 11))
+                EmptyView()
             }
             .progressViewStyle(.circular)
-            .tint(ActivityPalette.island(mode: renderingMode).color(Theme.coral))
+            .tint(ActivityPalette.island(mode: renderingMode).color(Theme.terraDot))
         } else {
-            Text(model.emoji).font(.system(size: 14))
+            IslandDot(model: model, size: 12)
         }
     }
 }

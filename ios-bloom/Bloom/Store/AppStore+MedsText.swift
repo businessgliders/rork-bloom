@@ -10,9 +10,50 @@ extension AppStore {
 
     /// Saved as typed, separately from applying (the plan changes only on "Update plan").
     func saveMedsText(_ text: String, for owner: MedOwner) {
-        guard medsText[owner] != text else { return }
+        // After "Delete all my data" the open editor closes and saves; don't write her old text back.
+        guard isOnboarded, medsText[owner] != text else { return }
         medsText[owner] = text
+        markMedsTextEdited(owner)
         save()
+    }
+
+    // MARK: - med_texts sync (latest edit wins)
+
+    private static let stampsKey = "meds.textEditedAt"
+
+    /// When this phone last changed that person's text (kept on this phone only).
+    func medsTextEditedAt(_ owner: MedOwner) -> Date? {
+        let raw = UserDefaults.standard.dictionary(forKey: Self.stampsKey) as? [String: Double] ?? [:]
+        return raw[owner.rawValue].map { Date(timeIntervalSince1970: $0) }
+    }
+
+    private func setMedsTextStamp(_ owner: MedOwner, _ date: Date) {
+        var raw = UserDefaults.standard.dictionary(forKey: Self.stampsKey) as? [String: Double] ?? [:]
+        raw[owner.rawValue] = date.timeIntervalSince1970
+        UserDefaults.standard.set(raw, forKey: Self.stampsKey)
+    }
+
+    /// Records a local edit and queues it for `med_texts`.
+    func markMedsTextEdited(_ owner: MedOwner) {
+        setMedsTextStamp(owner, .now)
+        enqueue(.medText, owner.rawValue)
+    }
+
+    /// Takes each remote text that is newer than this phone's last edit. Returns true when a text changed.
+    func mergeRemoteMedTexts(_ remote: RemoteState) -> Bool {
+        var changed = false
+        for row in remote.medTexts {
+            guard let role = remote.members.first(where: { $0.userID == row.taker_id })?.role else { continue }
+            if hasPendingOp(.medText, role.rawValue) { continue }
+            let remoteDate = row.updated_at ?? .distantPast
+            if let local = medsTextEditedAt(role), local > remoteDate, medsText[role] != nil { continue }
+            if medsText[role] != row.text {
+                medsText[role] = row.text
+                changed = true
+            }
+            setMedsTextStamp(role, remoteDate)
+        }
+        return changed
     }
 
     /// One line per rule's own words (in order, no repeats), then one line per medication with no rule.
@@ -94,6 +135,7 @@ extension AppStore {
     @discardableResult
     func applyText(_ owner: MedOwner, text: String, assembled: RegimenAssembler.Result, confirmed: Bool) -> [RuleViolation] {
         medsText[owner] = text
+        markMedsTextEdited(owner)
         let found = applyRegimen(owner: owner, meds: assembled.drafts, rules: assembled.rules, confirmed: confirmed)
         let today = PregnancyMath.calendar.startOfDay(for: now)
         for (index, draft) in assembled.drafts.enumerated() {
@@ -134,6 +176,8 @@ extension AppStore {
         let existing = medsTextOrFallback(for: newOwner).trimmingCharacters(in: .whitespacesAndNewlines)
         let added = moving.isEmpty ? [medications[i].shortName] : moving
         medsText[newOwner] = ([existing].filter { !$0.isEmpty } + added).joined(separator: "\n")
+        markMedsTextEdited(oldOwner)
+        markMedsTextEdited(newOwner)
 
         medications[i].owner = newOwner
         medications[i].takerID = isShared ? memberID(for: newOwner) : nil
@@ -142,5 +186,136 @@ extension AppStore {
         enqueue(.medication, id.uuidString)
         saveAndReschedule()
         return added
+    }
+
+    // MARK: - Medication sheet
+
+    /// "Remove medication": its lines leave her text (with the lines under it that have no other med name),
+    /// its rules and planned times go, and it ends from today. Logged history stays.
+    func removeMedicationFromPlan(_ id: UUID) {
+        guard let i = medications.firstIndex(where: { $0.id == id }) else { return }
+        let owner = medications[i].owner
+        let names = [medications[i].name, medications[i].friendlyName].filter { !$0.isEmpty }.map { $0.lowercased() }
+        let others = currentMedications(for: owner).filter { $0.id != id }
+            .flatMap { [$0.name, $0.friendlyName] }.filter { !$0.isEmpty }.map { $0.lowercased() }
+        func words(_ line: String) -> [String] {
+            line.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" }).map(String.init)
+        }
+        func mentions(_ line: String) -> Bool {
+            let set = Set(words(line))
+            return names.contains { n in n.contains(" ") ? line.lowercased().contains(n) : set.contains(n) }
+        }
+        func startsWithOther(_ line: String) -> Bool {
+            let lower = line.lowercased().trimmingCharacters(in: .whitespaces)
+            return others.contains { lower.hasPrefix($0) }
+        }
+        var kept: [String] = []
+        var skipping = false
+        for line in medsTextOrFallback(for: owner).components(separatedBy: .newlines) {
+            let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
+            if blank {
+                skipping = false
+                // No double blank lines where a block was taken out.
+                if let last = kept.last, last.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+                kept.append(line)
+            } else if mentions(line), !startsWithOther(line) {
+                skipping = true
+            } else if skipping, !startsWithOther(line) {
+                continue
+            } else {
+                skipping = false
+                kept.append(line)
+            }
+        }
+        while let first = kept.first, first.trimmingCharacters(in: .whitespaces).isEmpty { kept.removeFirst() }
+        while let last = kept.last, last.trimmingCharacters(in: .whitespaces).isEmpty { kept.removeLast() }
+        medsText[owner] = kept.joined(separator: "\n")
+        markMedsTextEdited(owner)
+
+        let yesterday = PregnancyMath.addDays(-1, to: now)
+        medications[i].endDate = max(yesterday, PregnancyMath.calendar.startOfDay(for: medications[i].startDate))
+        medications[i].paused = false
+        removeFromSchedules(id)
+        enqueue(.medication, id.uuidString)
+        rebuildPlan()
+        saveAndReschedule()
+    }
+
+    /// Re-reads and applies each person's text (after a med changed hands).
+    func reapplyTexts(_ owners: [MedOwner]) async {
+        let parser = LineParser()
+        for who in owners {
+            let body = medsTextOrFallback(for: who)
+            let all = RegimenAssembler.lines(of: body)
+            let parsed = await parser.parse(lines: all, known: knownMedNames(who))
+            guard parser.isUpToDate(all) else { continue }
+            let result = RegimenAssembler.assemble(text: body, lineParses: parsed, existing: existingForAssembler(who))
+            applyText(who, text: body, assembled: result, confirmed: true)
+        }
+    }
+}
+
+/// One medication whose time would move if her text were applied.
+struct TextTimeChange: Equatable {
+    var id: UUID
+    var name: String
+    var from: Int
+    var to: Int
+}
+
+extension AppStore {
+    /// What "Update plan" would do to the times of meds she already has, in one routine. Nothing is saved.
+    /// New meds are left out (they have no time to move from).
+    func previewTimeChanges(_ owner: MedOwner, assembled: RegimenAssembler.Result, routineID: UUID?) -> [TextTimeChange] {
+        let current = currentMedications(for: owner)
+        var idMap: [UUID: UUID] = [:]
+        var pinned: [UUID: DoseTime] = [:]
+        for draft in assembled.drafts {
+            guard let id = draft.existingID, current.contains(where: { $0.id == id }) else { continue }
+            idMap[draft.id] = id
+            if let fixed = draft.fixedTime { pinned[id] = fixed }
+        }
+        let kept = Set(idMap.values)
+        guard !kept.isEmpty else { return [] }
+        var newRules: [ScheduleRule] = []
+        for var rule in assembled.rules {
+            rule.subjectID = idMap[rule.subjectID] ?? rule.subjectID
+            if let target = rule.targetMedicationID { rule.targetMedicationID = idMap[target] ?? target }
+            guard kept.contains(rule.subjectID) else { continue }
+            if rule.target == .medication, !kept.contains(rule.targetMedicationID ?? UUID()) { continue }
+            rule.owner = owner
+            newRules.append(rule)
+        }
+        let list = templates(for: owner).map { template -> ScheduleTemplate in
+            var t = template
+            t.doses = t.doses.filter { kept.contains($0.medicationID) }
+            for (id, time) in pinned {
+                if let i = t.doses.firstIndex(where: { $0.medicationID == id }) {
+                    t.doses[i].time = time
+                    t.doses[i].pinned = true
+                } else {
+                    t.doses.append(TemplateDose(medicationID: id, time: time, pinned: true))
+                }
+            }
+            return t
+        }
+        let generated = ScheduleCycle.generateAll(
+            list,
+            meds: { self.engineMeds(for: $0).filter { kept.contains($0.id) } },
+            rules: { _ in newRules }
+        )
+        let all = templates(for: owner)
+        guard let old = all.first(where: { $0.id == routineID }) ?? all.first,
+              let new = generated.templates.first(where: { $0.id == old.id }) else { return [] }
+        let names = medicationNames
+        var out: [TextTimeChange] = []
+        for dose in new.doses {
+            guard let before = old.dose(for: dose.medicationID)?.time.minutesFromMidnight else { continue }
+            let after = dose.time.minutesFromMidnight
+            if before != after {
+                out.append(TextTimeChange(id: dose.medicationID, name: names[dose.medicationID] ?? "Medication", from: before, to: after))
+            }
+        }
+        return out.sorted { $0.from < $1.from }
     }
 }

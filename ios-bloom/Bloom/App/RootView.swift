@@ -16,6 +16,7 @@ struct RootView: View {
         Group {
             if store.isOnboarded {
                 MainTabView()
+                    .id(store.resetGeneration)
                     .transition(.opacity.combined(with: .scale(scale: 1.02)))
             } else {
                 OnboardingView()

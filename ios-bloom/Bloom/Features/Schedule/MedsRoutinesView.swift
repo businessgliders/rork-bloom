@@ -2,14 +2,16 @@ import PhotosUI
 import SwiftUI
 
 /// The meds & rules text editor: first setup, and later "Edit my meds & rules" (Meds & routines, Settings).
-/// routine chips → one row of day-anchor time cards → "Your meds & rules" (the only place to add,
-/// change or remove meds) → "What Bloom understood", one line per rule with problems inline.
+/// Boards 4 / 4b: routine chips → her text (the only place to add,
+/// change or remove meds) → problems tied to her lines → "Update plan" with what would move.
 /// A line without a med name belongs to the med on the nearest line above; a blank line is a break.
 /// Lines are read one at a time (cached, in parallel, 600 ms after typing stops); the engine places every time.
 struct MedsRoutinesView: View {
     var owner: MedOwner
     /// Opened from "Edit my meds & rules" (not first setup).
     var editing = false
+    /// Open with the caret on the line that names this medication.
+    var focusName: String? = nil
     /// After "Update plan" (first setup flips to the overview; editing goes back).
     var onApplied: (() -> Void)? = nil
 
@@ -21,7 +23,6 @@ struct MedsRoutinesView: View {
     @State private var editor = MedsEditorController()
     @State private var query: EditorQuery?
     @State private var editorFocused = false
-    @State private var lineCenters: [CGFloat] = []
     @State private var debounce: Task<Void, Never>?
     @State private var revision = 0
     @State private var confirmed = false
@@ -68,35 +69,48 @@ struct MedsRoutinesView: View {
         let result = assembled
         let names = names(result)
         AdaptiveColumns {
-            PaneScroll(pane: .primary) {
-                RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine)
+            PaneScroll(pane: .primary, spacing: 14) {
+                RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine, showTimeCards: !editing)
                 editorCard(names)
             }
+            .background(Theme.dayCanvas.ignoresSafeArea())
         } secondary: {
-            PaneScroll(pane: .secondary) {
+            PaneScroll(pane: .secondary, spacing: 14) {
                 consentCard
-                understoodSection(result)
-                confirmBar(result)
+                problemsSection(result)
+                if !editorFocused { updateBar(result, inline: true) }
             }
+            .background(Theme.dayCanvas.ignoresSafeArea())
         } compact: {
-            PaneScroll {
-                RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine)
+            PaneScroll(spacing: 14) {
+                RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine, showTimeCards: !editing)
                 editorCard(names)
                 consentCard
-                understoodSection(result)
+                problemsSection(result)
             }
-            .background(BloomBackground())
+            .background(Theme.dayCanvas.ignoresSafeArea())
             .safeAreaInset(edge: .bottom) {
-                if !editorFocused {
-                    compactConfirmBar(result).duoBarClearance()
-                }
+                if !editorFocused { updateBar(result, inline: false).duoBarClearance() }
             }
         }
         .safeAreaInset(edge: .bottom) {
             if editorFocused { suggestionBar(names).duoBarClearance() }
         }
-        .navigationTitle(editing ? "Edit my meds & rules" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines"))
+        .navigationTitle(editing ? "My rules" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines"))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if editorFocused {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        Haptics.select()
+                        editor.dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .tint(Theme.rose)
+                    .accessibilityIdentifier("editor-done")
+                }
+            }
+        }
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: store.scheduleChange?.id)
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: editorFocused)
         .onAppear(perform: load)
@@ -110,7 +124,12 @@ struct MedsRoutinesView: View {
             scheduleParse()
         }
         .sheet(item: $sheetMed) { med in
-            MedDetailsSheet(medication: med) { id, newOwner in move(id, to: newOwner) }
+            MedicationSheet(medication: med) { med in
+                Task {
+                    try? await Task.sleep(for: .milliseconds(450))
+                    editor.focus(lineNamed: med.shortName)
+                }
+            }
         }
     }
 
@@ -119,18 +138,18 @@ struct MedsRoutinesView: View {
 
     private func editorCard(_ names: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Your meds & rules")
-                    .font(.bloom(.title3, weight: .bold))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                if !parser.reading.isEmpty {
+            if !parser.reading.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).tint(Theme.rose)
                     Text("Reading…")
-                        .font(.bloom(.caption, weight: .semibold))
-                        .foregroundStyle(Theme.blushDeep)
-                        .transition(.opacity)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.rose)
                 }
+                .transition(.opacity)
             }
+            // Each copy of the editor keeps its own line positions: the open iPhone Duo also lays out a hidden,
+            // full-width copy of this pane, whose unwrapped lines put the marks below the visible ones.
+            LineMeasured { report in
             MedsTextEditor(
                 text: $text,
                 names: names,
@@ -142,21 +161,36 @@ struct MedsRoutinesView: View {
                     if wasHolding && newQuery == nil { scheduleParse() }
                 },
                 onFocus: { editorFocused = $0 },
-                onLineCenters: { lineCenters = $0 }
+                onLineCenters: report,
+                onNameTap: { name in
+                    let lower = name.lowercased()
+                    if let med = store.currentMedications(for: owner).first(where: {
+                        $0.shortName.lowercased() == lower || $0.name.lowercased() == lower || $0.friendlyName.lowercased() == lower
+                    }) {
+                        Haptics.tap()
+                        sheetMed = med
+                    }
+                }
             )
             .frame(minHeight: 260)
-            .background(Theme.surface, in: .rect(cornerRadius: 22, style: .continuous))
-            .overlay(alignment: .topTrailing) { lineMarks }
-            .shadow(color: Color(light: 0xC9A893, dark: 0x000000).opacity(0.12), radius: 16, y: 6)
-            Text("One instruction per line. Type @ or the first letters of a med to pick its name.")
-                .font(.bloom(.caption))
-                .foregroundStyle(Theme.textSecondary)
+            .background(Theme.dayCard, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
+            } marks: { centers in
+                lineMarks(centers)
+            }
+            Text(editorFocused
+                 ? "Pick a name below, or keep typing a new one"
+                 : "Tap anywhere in the text to change it. Tap a name to open that medication.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.dayMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+                .contentTransition(.opacity)
         }
         .animation(.easeInOut(duration: 0.2), value: parser.reading)
     }
 
-    /// Next to each line: a shimmer while it's being read, a soft check once understood, a warning if not.
-    private var lineMarks: some View {
+    /// Next to each line: a shimmer while it's being read, a green check once understood, a warning if not.
+    private func lineMarks(_ lineCenters: [CGFloat]) -> some View {
         ZStack(alignment: .topTrailing) {
             Color.clear
             ForEach(Array(lines.enumerated()), id: \.offset) { index, raw in
@@ -173,13 +207,13 @@ struct MedsRoutinesView: View {
                             } label: {
                                 Image(systemName: "exclamationmark.circle.fill")
                                     .font(.system(size: 17, weight: .semibold))
-                                    .foregroundStyle(Theme.coralDeep)
+                                    .foregroundStyle(Theme.terraDot)
                             }
                             .accessibilityLabel("Couldn't read this line. Try again")
-                        } else if parser.resolved(lines)[index] != nil {
+                        } else if !editorFocused, parser.resolved(lines)[index] != nil {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.sage)
+                                .foregroundStyle(Theme.greenCheck)
                                 .transition(.scale.combined(with: .opacity))
                                 .accessibilityLabel("Understood")
                         }
@@ -192,68 +226,72 @@ struct MedsRoutinesView: View {
         .allowsHitTesting(true)
     }
 
+    /// "Your medications" above the keyboard; the best match for what she's typing is filled.
     private func suggestionBar(_ names: [String]) -> some View {
         let matches = query.map { NameSuggestions.matches($0, in: names) } ?? []
-        return HStack(spacing: 8) {
+        let shown = query == nil ? names : matches
+        let best = query == nil ? nil : matches.first
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Your medications")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.dayMuted)
+                Spacer()
+                // The Duo's side bar puts the toolbar's Done under the keyboard, so repeat it here.
+                DuoBarOnly {
+                    Button("Done") {
+                        Haptics.select()
+                        editor.dismiss()
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                    .tint(Theme.rose)
+                    .frame(minWidth: 44, minHeight: 32)
+                    .accessibilityIdentifier("editor-done-bar")
+                }
+            }
+            .padding(.horizontal, 16)
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
-                    if matches.isEmpty {
+                    if shown.isEmpty {
                         Button {
                             editor.insertMarker()
                         } label: {
                             Label("Pick a med", systemImage: "at")
-                                .font(.bloom(.subheadline, weight: .semibold))
-                                .foregroundStyle(Theme.textSecondary)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Theme.daySecondary)
                                 .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
+                                .frame(minHeight: 36)
                         }
                         .accessibilityIdentifier("suggest-at")
                     }
-                    ForEach(matches, id: \.self) { name in
+                    ForEach(shown, id: \.self) { name in
+                        let isBest = name == best
                         Button {
                             Haptics.select()
                             editor.insert(name)
                         } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "pills.fill")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text(name)
-                                    .font(.bloom(.subheadline, weight: .semibold))
-                            }
-                            .foregroundStyle(Theme.blushDeep)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Theme.blushSoft, in: .capsule)
+                            Text(name)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(isBest ? .white : Theme.rose)
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 36)
+                                .background(isBest ? Theme.rose : Theme.roseTint, in: .capsule)
+                                .frame(minHeight: 44)
+                                .contentShape(.rect)
                         }
                         .buttonStyle(PressableStyle())
                         .accessibilityIdentifier("suggest-\(name)")
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
             }
             .scrollIndicators(.hidden)
-            // More names scroll in from the right: fade them out before Done instead of cutting them.
-            .mask {
-                HStack(spacing: 0) {
-                    Color.black
-                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: 28)
-                }
-            }
-            Rectangle()
-                .fill(Theme.textSecondary.opacity(0.25))
-                .frame(width: 1, height: 24)
-            Button("Done") { editor.dismiss() }
-                .font(.bloom(.subheadline, weight: .bold))
-                .tint(Theme.blushDeep)
-                .padding(.leading, 4)
-                .padding(.trailing, 16)
-                .accessibilityIdentifier("editor-done")
         }
-        .frame(height: 50)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
-        .animation(.spring(response: 0.25, dampingFraction: 0.9), value: matches)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+        .background(Theme.dayCanvas)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.dayDivider).frame(height: 1) }
+        .animation(.spring(response: 0.25, dampingFraction: 0.9), value: shown)
     }
 
     // MARK: Consent
@@ -263,11 +301,11 @@ struct MedsRoutinesView: View {
         if store.aiLookupConsent != true, !allRead, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Before Bloom reads your lines", systemImage: "hand.raised.fill")
-                    .font(.bloom(.headline, weight: .bold))
-                    .foregroundStyle(Theme.text)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.dayText)
                 Text("Bloom sends each line you write (with the lines just above it, so it knows which medication a line is about), and nothing else, to Rork's AI service, which passes it through Vercel AI Gateway to DeepSeek (Anthropic Claude if that's slow). It only sorts the line into medications and rules; the times are worked out on this iPhone. No photos, names or dates. Nothing changes until you tap Update plan.")
-                    .font(.bloom(.footnote))
-                    .foregroundStyle(Theme.textSecondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.daySecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
                     Button("Allow & read") {
@@ -275,264 +313,120 @@ struct MedsRoutinesView: View {
                         store.setAILookupConsent(true)
                         runParse()
                     }
-                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
+                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.rose))
                     .accessibilityIdentifier("ai-consent-allow")
                     if store.aiLookupConsent == nil {
                         Button("Not now") { store.setAILookupConsent(false) }
-                            .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
+                            .buttonStyle(BloomSoftButtonStyle(tint: Theme.daySecondary, fill: Theme.dayCard))
                     }
                 }
             }
-            .bloomCard(fill: Theme.blushSoft, padding: 16)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.roseTint, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
         }
     }
 
-    // MARK: What Bloom understood
+    // MARK: Problems (tied to her lines)
 
-    private func understoodSection(_ result: RegimenAssembler.Result) -> some View {
+    @ViewBuilder
+    private func problemsSection(_ result: RegimenAssembler.Result) -> some View {
         let t = routine
         let violations = t.map { store.violations(in: $0) } ?? []
         let lineTexts = Set(result.lines.map(\.text))
         let orphans = violations.filter { !lineTexts.contains(LineParseService.normalize($0.rule.sourceText)) }
-        let meds = store.currentMedications(for: owner)
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("What Bloom understood")
-                .font(.bloom(.title3, weight: .bold))
-                .foregroundStyle(Theme.text)
-
-            if !meds.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(meds) { med in
+        let rows: [(index: Int, raw: String, key: String, problem: String?, failed: String?, broken: [RuleViolation])] =
+            lines.enumerated().compactMap { index, raw in
+                let key = LineParseService.normalize(raw)
+                guard !key.isEmpty else { return nil }
+                let summary = result.lines.first { $0.index == index }
+                let broken = summary.map { s in violations.filter { LineParseService.normalize($0.rule.sourceText) == s.text } } ?? []
+                let failed = parser.isReading(index: index, in: lines) ? nil : parser.failed[key]
+                guard summary?.problem != nil || failed != nil || !broken.isEmpty else { return nil }
+                return (index, raw, key, summary?.problem, failed, broken)
+            }
+        if !rows.isEmpty || !orphans.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(rows, id: \.index) { row in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button {
+                            Haptics.tap()
+                            editor.focus(lineNamed: row.key, index: row.index)
+                        } label: {
+                            Text("Line \(row.index + 1) · “\(row.key)”")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.dayMuted)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        if let problem = row.problem {
+                            problemLine(problem)
+                        }
+                        if let failed = row.failed {
                             Button {
-                                Haptics.tap()
-                                sheetMed = med
+                                parser.forget(row.raw)
+                                runParse()
                             } label: {
-                                HStack(spacing: 6) {
-                                    MedBadge(medication: med, size: 24, fill: med.paused ? Theme.surfaceMuted : Theme.blushSoft)
-                                    Text(med.shortName)
-                                        .font(.bloom(.subheadline, weight: .semibold))
-                                        .foregroundStyle(med.paused ? Theme.textSecondary : Theme.text)
-                                    if med.paused {
-                                        Image(systemName: "pause.fill")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundStyle(Theme.textSecondary)
-                                    }
-                                }
-                                .padding(.leading, 4)
-                                .padding(.trailing, 12)
-                                .padding(.vertical, 4)
-                                .background(Theme.surface, in: .capsule)
+                                problemLine("\(failed) Tap to try again.")
                             }
-                            .buttonStyle(PressableStyle())
-                            .accessibilityLabel(med.paused ? "\(med.shortName), paused" : med.shortName)
-                            .accessibilityHint("Name, photo and who takes it")
-                            .accessibilityIdentifier("med-chip-\(med.shortName)")
+                            .buttonStyle(.plain)
+                        }
+                        if let t {
+                            ForEach(row.broken) { v in RuleProblemCard(template: t, violation: v) }
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.dayCard, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
+                    .accessibilityIdentifier("line-problem-\(row.index + 1)")
                 }
-                .scrollIndicators(.hidden)
-            }
-
-            if let t {
-                ForEach(orphans) { v in RuleProblemCard(template: t, violation: v) }
-            }
-
-            VStack(alignment: .leading, spacing: 0) {
-                let rows = understoodRows(result)
-                if rows.isEmpty {
-                    Text("Each line you write shows here as Bloom reads it.")
-                        .font(.bloom(.subheadline))
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(14)
-                }
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    if index > 0 { Divider().padding(.leading, 14) }
-                    understoodRow(row)
-                    if let t, let summary = row.summary {
-                        ForEach(violations.filter { LineParseService.normalize($0.rule.sourceText) == summary.text }) { v in
-                            RuleProblemCard(template: t, violation: v)
-                                .padding(.horizontal, 10)
-                                .padding(.bottom, 10)
-                        }
-                    }
+                if let t {
+                    ForEach(orphans) { v in RuleProblemCard(template: t, violation: v) }
                 }
             }
-            .background(Theme.surface.opacity(0.85), in: .rect(cornerRadius: 22, style: .continuous))
+            .transition(.opacity)
         }
     }
 
-    private struct UnderstoodRow {
-        var index: Int
-        var key: String
-        var raw: String
-        var summary: RegimenAssembler.LineSummary?
-    }
-
-    private func understoodRows(_ result: RegimenAssembler.Result) -> [UnderstoodRow] {
-        lines.enumerated().compactMap { index, raw in
-            let key = LineParseService.normalize(raw)
-            guard !key.isEmpty else { return nil }
-            return UnderstoodRow(index: index, key: key, raw: raw, summary: result.lines.first { $0.index == index })
-        }
-    }
-
-    @ViewBuilder
-    private func understoodRow(_ row: UnderstoodRow) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let summary = row.summary {
-                ForEach(summary.items, id: \.self) { item in
-                    understoodItem(item)
-                }
-                if let problem = summary.problem {
-                    Label(problem, systemImage: "questionmark.circle.fill")
-                        .font(.bloom(.footnote, weight: .semibold))
-                        .foregroundStyle(Theme.peachDeep)
-                    Text("“\(row.key)”")
-                        .font(.bloom(.caption))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2)
-                }
-            } else if parser.isReading(index: row.index, in: lines) {
-                HStack(spacing: 8) {
-                    ShimmerPill()
-                    Text(row.key)
-                        .font(.bloom(.subheadline))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                }
-            } else if let failed = parser.failed[row.key] {
-                Button {
-                    parser.forget(row.raw)
-                    runParse()
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label(failed, systemImage: "exclamationmark.circle.fill")
-                            .font(.bloom(.footnote, weight: .semibold))
-                            .foregroundStyle(Theme.coralDeep)
-                        Text("“\(row.key)”")
-                            .font(.bloom(.caption))
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(2)
-                    }
-                }
-                .buttonStyle(.plain)
-            } else {
-                Text(row.key)
-                    .font(.bloom(.subheadline))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(2)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// "Iron · at least 4 h after Thyroid": the med name in bold, the rule after it.
-    private func understoodItem(_ item: String) -> some View {
-        let parts = item.components(separatedBy: " · ")
-        let isFood = item.contains("no food")
-        return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: isFood ? "fork.knife" : "arrow.left.and.right")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(isFood ? Theme.coralDeep : Theme.textSecondary)
-                .frame(width: 14)
-            (Text(parts.first ?? "").fontWeight(.semibold).foregroundStyle(Theme.text)
-             + Text(parts.count > 1 ? " · " + parts.dropFirst().joined(separator: " · ") : "").foregroundStyle(Theme.textSecondary))
-                .font(.bloom(.subheadline))
+    private func problemLine(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle().fill(Theme.terraDot).frame(width: 7, height: 7)
+            Text(text)
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.terraText)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .accessibilityElement(children: .combine)
     }
 
-    // MARK: Confirmation
+    // MARK: Update bar
 
     @ViewBuilder
-    private func confirmBar(_ result: RegimenAssembler.Result) -> some View {
+    private func updateBar(_ result: RegimenAssembler.Result, inline: Bool) -> some View {
         let count = allRead ? store.pendingChangeCount(owner, assembled: result) : 0
-        if justUpdated {
-            Label("Plan updated", systemImage: "checkmark.circle.fill")
-                .font(.bloom(.subheadline, weight: .semibold))
-                .foregroundStyle(Theme.sageDeep)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Theme.sageSoft, in: .capsule)
-                .frame(maxWidth: .infinity)
-                .transition(.scale.combined(with: .opacity))
-        } else if count > 0, !result.drafts.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(count == 1 ? "1 change ready" : "\(count) changes ready")
-                    .font(.bloom(.headline, weight: .bold))
-                    .foregroundStyle(Theme.text)
-                Toggle(isOn: $confirmed) {
-                    Text("Matches my doctor or pharmacist")
-                        .font(.bloom(.subheadline, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                }
-                .tint(Theme.sageButton)
-                .accessibilityIdentifier("meds-text-confirm")
-                Button {
-                    update(result)
-                } label: {
-                    Label("Update plan", systemImage: "calendar.badge.clock")
-                        .font(.bloom(.headline, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 13)
-                        .background(Theme.roseButton.opacity(confirmed ? 1 : 0.45), in: .capsule)
-                }
-                .buttonStyle(PressableStyle())
-                .disabled(!confirmed)
-                .accessibilityIdentifier("meds-text-update")
-            }
-            .padding(16)
-            .background(.regularMaterial, in: .rect(cornerRadius: 24, style: .continuous))
-            .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-    }
-
-    /// Folded Duo and iPhone: one short row pinned at the bottom (space is reserved under the text),
-    /// so it never covers what she's reading.
-    @ViewBuilder
-    private func compactConfirmBar(_ result: RegimenAssembler.Result) -> some View {
-        let count = allRead ? store.pendingChangeCount(owner, assembled: result) : 0
-        if justUpdated {
-            Label("Plan updated", systemImage: "checkmark.circle.fill")
-                .font(.bloom(.subheadline, weight: .semibold))
-                .foregroundStyle(Theme.sageDeep)
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .background(.regularMaterial)
-                .overlay(alignment: .top) { Divider() }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-        } else if count > 0, !result.drafts.isEmpty {
-            HStack(spacing: 12) {
+        if count > 0, !result.drafts.isEmpty {
+            let moves = store.previewTimeChanges(owner, assembled: result, routineID: routine?.id)
+            VStack(alignment: .leading, spacing: 12) {
+                changeSummary(count: count, moves: moves)
                 Button {
                     Haptics.select()
                     confirmed.toggle()
                 } label: {
-                    HStack(spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
                         Image(systemName: confirmed ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(confirmed ? Theme.sageButton : Theme.textSecondary)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(count == 1 ? "1 change ready" : "\(count) changes ready")
-                                .font(.bloom(.subheadline, weight: .bold))
-                                .foregroundStyle(Theme.text)
-                            Text("Matches my doctor or pharmacist")
-                                .font(.bloom(.caption))
-                                .foregroundStyle(Theme.textSecondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.85)
-                        }
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(confirmed ? Theme.greenCheck : Theme.dayMuted)
+                        Text("This matches what my doctor or pharmacist told me")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Theme.dayText)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Matches my doctor or pharmacist")
+                .accessibilityLabel("This matches what my doctor or pharmacist told me")
                 .accessibilityValue(confirmed ? "On" : "Off")
                 .accessibilityAddTraits(.isToggle)
                 .accessibilityIdentifier("meds-text-confirm")
@@ -540,22 +434,72 @@ struct MedsRoutinesView: View {
                     update(result)
                 } label: {
                     Text("Update plan")
-                        .font(.bloom(.subheadline, weight: .bold))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 44)
-                        .background(Theme.roseButton.opacity(confirmed ? 1 : 0.45), in: .capsule)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .background(Theme.rose.opacity(confirmed ? 1 : 0.4), in: .capsule)
                 }
                 .buttonStyle(PressableStyle())
                 .disabled(!confirmed)
                 .accessibilityIdentifier("meds-text-update")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(.regularMaterial)
-            .overlay(alignment: .top) { Divider() }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if inline {
+                    RoundedRectangle(cornerRadius: Theme.dayRadius, style: .continuous).fill(Theme.dayCard)
+                } else {
+                    Rectangle().fill(Theme.dayCard).ignoresSafeArea(edges: .bottom)
+                }
+            }
+            .overlay(alignment: .top) {
+                if !inline { Rectangle().fill(Theme.dayDivider).frame(height: 1) }
+            }
             .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if justUpdated {
+            Label("Plan updated", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.greenText)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .background(Theme.greenTint, in: .capsule)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 8)
+                .transition(.scale.combined(with: .opacity))
+        } else if inline, allRead {
+            // Wide layout only: keeps the side pane from looking empty when nothing is pending.
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Theme.greenCheck)
+                Text("No changes to apply")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.daySecondary)
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.dayRadius, style: .continuous).fill(Theme.dayCard))
+            .accessibilityElement(children: .combine)
         }
+    }
+
+    /// "1 time change · Prenatal AM moves from 3:00 PM to 3:30 PM"
+    private func changeSummary(count: Int, moves: [TextTimeChange]) -> some View {
+        let head: String = {
+            if moves.isEmpty { return count == 1 ? "1 change" : "\(count) changes" }
+            return moves.count == 1 ? "1 time change" : "\(moves.count) time changes"
+        }()
+        let detail: String = {
+            guard let first = moves.first else { return "No times move" }
+            let line = "\(first.name) moves from \(ScheduleEngine.clock(first.from)) to \(ScheduleEngine.clock(first.to))"
+            return moves.count > 1 ? "\(line), and \(moves.count - 1) more" : line
+        }()
+        return Text("\(Text(head).fontWeight(.semibold)) · \(detail)")
+            .font(.system(size: 15))
+            .monospacedDigit()
+            .foregroundStyle(Theme.dayText)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("meds-text-summary")
     }
 
     // MARK: Logic
@@ -566,6 +510,12 @@ struct MedsRoutinesView: View {
         text = store.medsTextOrFallback(for: owner)
         if selectedRoutine == nil { selectedRoutine = store.activeTemplate(for: owner, on: store.now)?.id }
         runParse()
+        if let focusName {
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                editor.focus(lineNamed: focusName)
+            }
+        }
     }
 
     private func scheduleParse() {
@@ -597,18 +547,18 @@ struct MedsRoutinesView: View {
         }
     }
 
+    /// Update plan: back to Meds & routines when every rule is kept; otherwise stay and explain under the lines.
     private func update(_ result: RegimenAssembler.Result) {
         guard confirmed else { return }
         let found = store.applyText(owner, text: text, assembled: result, confirmed: true)
-        if found.isEmpty { Haptics.success() } else { Haptics.warning() }
         confirmed = false
-        justUpdated = true
         revision += 1
-        if let onApplied {
-            Task {
-                try? await Task.sleep(for: .seconds(0.9))
-                onApplied()
-            }
+        if found.isEmpty {
+            Haptics.success()
+            justUpdated = true
+            onApplied?()
+        } else {
+            Haptics.warning()
         }
         Task {
             if await Permissions.notificationStatus() == .notDetermined {
@@ -868,5 +818,17 @@ struct MedDetailsSheet: View {
         if owner != med.owner { onMove(med.id, owner) }
         Haptics.success()
         dismiss()
+    }
+}
+
+/// The editor and the marks beside its lines, sharing line positions only with each other.
+private struct LineMeasured<Content: View, Marks: View>: View {
+    @ViewBuilder var content: (@escaping ([CGFloat]) -> Void) -> Content
+    @ViewBuilder var marks: ([CGFloat]) -> Marks
+    @State private var centers: [CGFloat] = []
+
+    var body: some View {
+        content { centers = $0 }
+            .overlay(alignment: .topTrailing) { marks(centers) }
     }
 }

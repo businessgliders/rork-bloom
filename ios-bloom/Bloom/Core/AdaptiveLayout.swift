@@ -98,6 +98,33 @@ extension View {
     }
 }
 
+/// Shows its content only where the Duo's vertical toolbar bar is present; elsewhere nothing.
+struct DuoBarOnly<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+#if canImport(SwiftUI, _version: 8.0.85)
+        if #available(iOS 27.1, *) {
+            DuoBarOnlyGate { content }
+        }
+#endif
+    }
+}
+
+#if canImport(SwiftUI, _version: 8.0.85)
+@available(iOS 27.1, *)
+private struct DuoBarOnlyGate<Content: View>: View {
+    @ViewBuilder var content: Content
+    @Environment(\.toolbarVerticalEdge) private var edge
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Folded only: the open display keeps its top toolbar clear of the keyboard, so a copy there is a duplicate.
+    var body: some View {
+        if edge != nil, sizeClass == .compact { content }
+    }
+}
+#endif
+
 private struct DuoListClearance: ViewModifier {
     var barOnly = false
     var pane: PaneSide = .single

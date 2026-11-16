@@ -90,218 +90,367 @@ struct RightNowWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: RightNowProvider()) { entry in
             RightNowWidgetView(entry: entry)
-                .containerBackground(for: .widget) {
-                    WidgetCanvas(glow: entry.window != nil ? Theme.coralSoft : Theme.peachSoft)
-                }
+                .containerBackground(for: .widget) { DayWidgetBackground() }
         }
         .configurationDisplayName("Right now")
-        .description("The dose that's due, your no-food countdown and today's progress.")
-        .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryCircular, .accessoryInline])
+        .description("The dose that's due, your no-food countdown and today's list.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge,
+                            .accessoryRectangular, .accessoryCircular, .accessoryInline])
     }
+}
+
+/// The warm day canvas behind every home-screen widget.
+struct DayWidgetBackground: View {
+    @Environment(\.colorScheme) private var scheme
+    var body: some View { DayPalette(scheme: scheme).canvas }
 }
 
 struct RightNowWidgetView: View {
     var entry: RightNowEntry
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let p = DayPalette(scheme: scheme)
         switch family {
         case .accessoryRectangular: RightNowRectangular(entry: entry)
         case .accessoryCircular: RightNowCircular(entry: entry)
         case .accessoryInline: RightNowInline(entry: entry)
         case .systemMedium:
-            HStack(spacing: 14) {
-                RightNowMain(entry: entry)
-                if entry.total > 0 {
-                    Rectangle().fill(Theme.ringTrack).frame(width: 1).padding(.vertical, 4)
-                    TodayList(entry: entry)
+            HStack(alignment: .top, spacing: 14) {
+                RightNowMain(entry: entry, p: p)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if entry.onboarded && entry.total > 0 {
+                    Rectangle().fill(p.divider).frame(width: 1)
+                    TodayList(entry: entry, p: p, limit: 4, actions: false)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-        default: RightNowMain(entry: entry)
+        case .systemLarge: RightNowLarge(entry: entry, p: p)
+        default: RightNowMain(entry: entry, p: p)
         }
     }
 }
 
-// MARK: - Main card
+private func clock(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
+
+// MARK: - Main state (small, and the left half of medium)
 
 private struct RightNowMain: View {
     var entry: RightNowEntry
+    var p: DayPalette
+    var showCaption = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                WidgetCaption(text: "Right now", color: entry.window != nil ? Theme.coralDeep : Theme.blushDeep)
-                Spacer(minLength: 4)
-                if entry.total > 0 {
-                    ProgressRing(progress: Double(entry.resolved) / Double(entry.total), lineWidth: 4)
-                        .frame(width: 22, height: 22)
-                }
+            if showCaption {
+                Text("Right now")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(p.secondary)
+                Spacer(minLength: 6)
             }
-            Spacer(minLength: 6)
             content
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: showCaption ? .infinity : nil, alignment: .topLeading)
     }
 
     @ViewBuilder private var content: some View {
         if !entry.onboarded {
-            message(emoji: "🌸", title: "Open Bloom", subtitle: "to get started")
+            message(title: "Open Bloom", subtitle: "to get started")
         } else if let dose = entry.due.first {
-            DueBlock(dose: dose, extra: entry.due.count - 1, window: entry.window)
+            DueBlock(dose: dose, extra: entry.due.count - 1, p: p)
         } else if let window = entry.window {
-            NoFoodBlock(window: window, now: entry.date)
+            NoFoodBlock(window: window, now: entry.date, p: p)
         } else if entry.allDone {
-            message(emoji: "🌷", title: "All done", subtitle: "All logged today", tint: Theme.sageDeep)
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 26))
+                    .foregroundStyle(p.greenCheck)
+                    .widgetAccentable()
+                Text("All logged")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(p.text)
+                Text("\(entry.resolved) of \(entry.total) today")
+                    .font(.system(size: 13))
+                    .foregroundStyle(p.secondary)
+            }
         } else if let next = entry.next {
-            NextBlock(next: next, nextWindow: entry.nextWindow)
+            NextBlock(next: next, p: p)
         } else {
-            message(emoji: "🍓", title: "Food OK", subtitle: "No doses today", tint: Theme.sageDeep)
+            VStack(alignment: .leading, spacing: 6) {
+                FoodOKChip(p: p)
+                Text("No doses today")
+                    .font(.system(size: 15))
+                    .foregroundStyle(p.secondary)
+            }
         }
     }
 
-    private func message(emoji: String, title: String, subtitle: String, tint: Color = Theme.text) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(emoji).font(.system(size: 30))
+    private func message(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.bloom(.title3, weight: .heavy))
-                .foregroundStyle(tint)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(p.text)
             Text(subtitle)
-                .font(.bloom(.caption, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(2)
+                .font(.system(size: 13))
+                .foregroundStyle(p.secondary)
         }
+    }
+}
+
+private struct FoodOKChip: View {
+    var p: DayPalette
+    var body: some View {
+        HStack(spacing: 5) {
+            WidgetDot(color: p.green, size: 7)
+            Text("Food OK")
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(p.greenText)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(p.greenTint, in: .capsule)
     }
 }
 
 private struct DueBlock: View {
     var dose: DoseInstance
     var extra: Int
-    var window: NoFoodWindow?
+    var p: DayPalette
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                EmojiBlob(emoji: dose.medication.emoji, size: 34, fill: Theme.blushSoft)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(extra > 0 ? "Time for · +\(extra)" : "Time for")
-                        .font(.bloom(.caption2, weight: .bold))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text(dose.medication.shortName)
-                        .font(.bloom(.headline, weight: .heavy))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                WidgetDot(color: p.rose)
+                Text(extra > 0 ? "Due \(clock(dose.scheduledAt)) · +\(extra)" : "Due \(clock(dose.scheduledAt))")
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .foregroundStyle(p.secondary)
             }
-            Button(intent: MarkDoseTakenIntent(medID: dose.medication.id.uuidString, scheduledAt: dose.scheduledAt)) {
-                Label("Taken", systemImage: "checkmark")
-                    .font(.bloom(.subheadline, weight: .heavy))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(Theme.roseButton, in: .capsule)
-            }
-            .buttonStyle(.plain)
+            Text(dose.medication.shortName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(p.text)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            TakenButton(dose: dose, p: p, compact: false)
         }
+    }
+}
+
+private struct TakenButton: View {
+    var dose: DoseInstance
+    var p: DayPalette
+    var compact: Bool
+
+    var body: some View {
+        Button(intent: MarkDoseTakenIntent(medID: dose.medication.id.uuidString, scheduledAt: dose.scheduledAt)) {
+            Text("Taken")
+                .font(.system(size: compact ? 13 : 15, weight: .semibold))
+                .foregroundStyle(compact ? p.rose : .white)
+                .frame(maxWidth: compact ? nil : .infinity)
+                .padding(.horizontal, compact ? 12 : 0)
+                .padding(.vertical, compact ? 6 : 8)
+                .background(compact ? p.roseTint : p.rose, in: .capsule)
+                .widgetAccentable()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Mark \(dose.medication.shortName) taken")
     }
 }
 
 private struct NoFoodBlock: View {
     var window: NoFoodWindow
     var now: Date
+    var p: DayPalette
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(window.title)
-                .font(.bloom(.subheadline, weight: .heavy))
-                .foregroundStyle(Theme.coralDeep)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                WidgetDot(color: p.terra)
+                Text("No food")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(p.terraText)
+            }
             Text(timerInterval: min(now, window.end)...window.end, countsDown: true)
-                .font(.system(size: 30, weight: .heavy))
+                .font(.system(size: 30, weight: .semibold))
                 .monospacedDigit()
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(p.text)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            Text("Eat again at \(window.end.formatted(date: .omitted, time: .shortened))")
-                .font(.bloom(.caption, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            ProgressView(timerInterval: window.start...window.end, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
-                .tint(Theme.coral)
-                .padding(.top, 4)
+            Text("Eat at \(clock(window.end))")
+                .font(.system(size: 13))
+                .monospacedDigit()
+                .foregroundStyle(p.secondary)
+            Spacer(minLength: 4)
+            ProgressView(timerInterval: window.start...window.end, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
+                .tint(p.terra)
         }
     }
 }
 
 private struct NextBlock: View {
     var next: DoseInstance
-    var nextWindow: NoFoodWindow?
+    var p: DayPalette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            WidgetChip(text: "Food OK", symbol: "fork.knife", tint: Theme.sageDeep, fill: Theme.sageSoft)
-            HStack(spacing: 8) {
-                EmojiBlob(emoji: next.medication.emoji, size: 32)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Next at \(next.scheduledAt.formatted(date: .omitted, time: .shortened))")
-                        .font(.bloom(.caption2, weight: .bold))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text(next.medication.shortName)
-                        .font(.bloom(.headline, weight: .heavy))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-            }
+            FoodOKChip(p: p)
+            Spacer(minLength: 2)
+            Text("Next · \(clock(next.scheduledAt))")
+                .font(.system(size: 13))
+                .monospacedDigit()
+                .foregroundStyle(p.secondary)
+            Text(next.medication.shortName)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(p.text)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-// MARK: - Medium: today's list
+// MARK: - Today's list (medium, large)
 
 private struct TodayList: View {
     var entry: RightNowEntry
+    var p: DayPalette
+    var limit: Int
+    var actions: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            WidgetCaption(text: "\(entry.resolved) of \(entry.total) today")
-            ForEach(entry.today.prefix(4)) { dose in
-                HStack(spacing: 7) {
-                    statusIcon(dose)
-                    Text(dose.medication.shortName)
-                        .font(.bloom(.caption, weight: .bold))
-                        .foregroundStyle(dose.isPending ? Theme.text : Theme.textSecondary)
-                        .strikethrough(dose.isSkipped)
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text((dose.log?.takenAt ?? dose.scheduledAt).formatted(date: .omitted, time: .shortened))
-                        .font(.bloom(.caption2, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .monospacedDigit()
+        VStack(alignment: .leading, spacing: actions ? 0 : 7) {
+            if !actions {
+                Text("Today · \(entry.resolved) of \(entry.total)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(p.secondary)
+            }
+            let rows = Array(entry.today.prefix(limit))
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, dose in
+                if actions {
+                    largeRow(dose)
+                    if index < rows.count - 1 { Rectangle().fill(p.divider).frame(height: 1) }
+                } else {
+                    smallRow(dose)
                 }
             }
-            if entry.today.count > 4 {
-                Text("+\(entry.today.count - 4) more")
-                    .font(.bloom(.caption2, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
+            if entry.today.count > limit {
+                Text("+\(entry.today.count - limit) more")
+                    .font(.system(size: 13))
+                    .foregroundStyle(p.muted)
+                    .padding(.top, actions ? 6 : 0)
             }
             Spacer(minLength: 0)
         }
     }
 
-    @ViewBuilder private func statusIcon(_ dose: DoseInstance) -> some View {
-        if dose.isTaken {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.sage)
-        } else if dose.isSkipped {
-            Image(systemName: "minus.circle.fill").foregroundStyle(Theme.textSecondary.opacity(0.6))
-        } else if dose.scheduledAt <= entry.date {
-            Image(systemName: "circle.inset.filled").foregroundStyle(Theme.blush)
-        } else {
-            Image(systemName: "circle").foregroundStyle(Theme.ringTrack)
+    private func smallRow(_ dose: DoseInstance) -> some View {
+        HStack(spacing: 7) {
+            Text(clock(dose.scheduledAt))
+                .font(.system(size: 13))
+                .monospacedDigit()
+                .foregroundStyle(p.secondary)
+                .frame(width: 58, alignment: .leading)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            WidgetDot(color: dotColor(dose), size: 7)
+            Text(dose.medication.shortName)
+                .font(.system(size: 13, weight: dose.isPending ? .medium : .regular))
+                .foregroundStyle(dose.isPending ? p.text : p.muted)
+                .strikethrough(dose.isSkipped)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
         }
+    }
+
+    private func largeRow(_ dose: DoseInstance) -> some View {
+        HStack(spacing: 10) {
+            Text(clock(dose.scheduledAt))
+                .font(.system(size: 15))
+                .monospacedDigit()
+                .foregroundStyle(p.secondary)
+                .frame(width: 72, alignment: .leading)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            WidgetDot(color: dotColor(dose))
+            Text(dose.medication.shortName)
+                .font(.system(size: 15, weight: dose.isPending ? .medium : .regular))
+                .foregroundStyle(dose.isPending ? p.text : p.muted)
+                .strikethrough(dose.isSkipped)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Spacer(minLength: 6)
+            trailing(dose)
+        }
+        .frame(minHeight: 38)
+    }
+
+    @ViewBuilder private func trailing(_ dose: DoseInstance) -> some View {
+        if dose.isTaken {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundStyle(p.greenCheck)
+                .widgetAccentable()
+        } else if dose.isSkipped {
+            Text("Skipped").font(.system(size: 13)).foregroundStyle(p.muted)
+        } else if dose.scheduledAt <= entry.date {
+            TakenButton(dose: dose, p: p, compact: true)
+        } else {
+            Circle().stroke(p.neutral, lineWidth: 1.5).frame(width: 20, height: 20)
+        }
+    }
+
+    private func dotColor(_ dose: DoseInstance) -> Color {
+        if dose.isTaken { return p.green }
+        if dose.isSkipped { return p.neutral }
+        return dose.scheduledAt <= entry.date ? p.rose : p.neutral
+    }
+}
+
+// MARK: - Large
+
+private struct RightNowLarge: View {
+    var entry: RightNowEntry
+    var p: DayPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Right now")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(p.text)
+                Spacer()
+                if entry.total > 0 {
+                    Text("\(entry.resolved) of \(entry.total) today")
+                        .font(.system(size: 13))
+                        .monospacedDigit()
+                        .foregroundStyle(p.secondary)
+                }
+            }
+            if entry.total > 0 {
+                WidgetBar(progress: Double(entry.resolved) / Double(entry.total), fill: p.green, track: p.divider)
+            }
+            RightNowMain(entry: entry, p: p, showCaption: false)
+                .frame(height: 112, alignment: .topLeading)
+                .padding(14)
+                .background(statusFill, in: .rect(cornerRadius: 20))
+            if entry.onboarded && entry.total > 0 {
+                TodayList(entry: entry, p: p, limit: 6, actions: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+                    .background(p.card, in: .rect(cornerRadius: 20))
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var statusFill: Color {
+        if entry.due.first != nil { return p.card }
+        if entry.window != nil { return p.terraTint }
+        return p.card
     }
 }
 
@@ -312,23 +461,40 @@ private struct RightNowRectangular: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            if let dose = entry.due.first {
-                Text("\(dose.medication.emoji) \(dose.medication.shortName)").font(.bloom(.headline, weight: .heavy)).lineLimit(1)
-                Text("Due since \(dose.scheduledAt.formatted(date: .omitted, time: .shortened))").font(.bloom(.caption))
+            if !entry.onboarded {
+                Text("Bloom").font(.headline)
+                Text("Open Bloom to get started").font(.caption)
+            } else if let dose = entry.due.first {
+                Text(dose.medication.shortName).font(.headline).lineLimit(1).minimumScaleFactor(0.6)
+                Text("Due \(clock(dose.scheduledAt))").font(.caption).monospacedDigit()
+                progress
             } else if let window = entry.window {
-                Text("No food").font(.bloom(.headline, weight: .heavy))
-                Text(timerInterval: min(entry.date, window.end)...window.end, countsDown: true)
-                    .font(.bloom(.body, weight: .bold)).monospacedDigit()
+                Text("No food").font(.headline)
+                HStack(spacing: 4) {
+                    Text(timerInterval: min(entry.date, window.end)...window.end, countsDown: true)
+                        .monospacedDigit()
+                        .frame(maxWidth: 64, alignment: .leading)
+                    Text("· eat at \(clock(window.end))")
+                }
+                .font(.caption)
+                progress
             } else if let next = entry.next {
-                Text("\(next.medication.emoji) \(next.medication.shortName)").font(.bloom(.headline, weight: .heavy)).lineLimit(1)
-                Text("Next at \(next.scheduledAt.formatted(date: .omitted, time: .shortened))").font(.bloom(.caption))
+                Text(next.medication.shortName).font(.headline).lineLimit(1).minimumScaleFactor(0.6)
+                Text("Next · \(clock(next.scheduledAt))").font(.caption).monospacedDigit()
+                progress
             } else {
-                Text("Bloom").font(.bloom(.headline, weight: .heavy))
-                Text(entry.allDone ? "All doses logged 🌷" : "Food OK").font(.bloom(.caption))
+                Text(entry.allDone ? "All logged" : "Food OK").font(.headline)
+                progress
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .widgetAccentable()
+    }
+
+    @ViewBuilder private var progress: some View {
+        if entry.total > 0 {
+            Text("\(entry.resolved) of \(entry.total) today").font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -357,13 +523,13 @@ private struct RightNowInline: View {
 
     var body: some View {
         if let dose = entry.due.first {
-            Text("\(dose.medication.emoji) Time for \(dose.medication.shortName)")
+            Text("Time for \(dose.medication.shortName)")
         } else if let window = entry.window {
-            Text("No food until \(window.end.formatted(date: .omitted, time: .shortened))")
+            Text("No food until \(clock(window.end))")
         } else if let next = entry.next {
-            Text("\(next.medication.emoji) \(next.medication.shortName) at \(next.scheduledAt.formatted(date: .omitted, time: .shortened))")
+            Text("Next: \(next.medication.shortName) at \(clock(next.scheduledAt))")
         } else {
-            Text(entry.allDone ? "🌷 All doses logged" : "🍓 Food OK")
+            Text(entry.allDone ? "All doses logged" : "Food OK")
         }
     }
 }

@@ -47,7 +47,7 @@ struct JourneyWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: JourneyProvider()) { entry in
             JourneyWidgetView(entry: entry)
-                .containerBackground(for: .widget) { WidgetCanvas() }
+                .containerBackground(for: .widget) { DayWidgetBackground() }
         }
         .configurationDisplayName("Journey")
         .description("This week's baby size and how many days to go.")
@@ -58,6 +58,9 @@ struct JourneyWidget: Widget {
 struct JourneyWidgetView: View {
     var entry: JourneyEntry
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var scheme
+
+    private var p: DayPalette { DayPalette(scheme: scheme) }
 
     var body: some View {
         if let age = entry.age, let profile = entry.profile {
@@ -72,67 +75,88 @@ struct JourneyWidgetView: View {
                 .gaugeStyle(.accessoryCircularCapacity)
             case .accessoryRectangular:
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("\(entry.week?.emoji ?? "🌱") Week \(age.weeks)").font(.bloom(.headline, weight: .heavy))
-                    Text(daysToGoText(age)).font(.bloom(.caption))
+                    Text("Week \(age.weeks)").font(.headline)
+                    Text(daysToGoText(age)).font(.caption)
                     Gauge(value: min(age.ringProgress, 1)) { EmptyView() }.gaugeStyle(.accessoryLinearCapacity)
                 }
                 .widgetAccentable()
             case .accessoryInline:
-                Text("\(entry.week?.emoji ?? "🌱") Week \(age.weeks) · \(daysToGoText(age))")
+                Text("Week \(age.weeks) · \(daysToGoText(age))")
             default: small(age: age)
             }
         } else {
-            VStack(spacing: 6) {
-                Text("🌸").font(.system(size: 34))
-                Text("Open Bloom to start your journey")
-                    .font(.bloom(.caption, weight: .bold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Open Bloom")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(p.text)
+                Text("to start your journey")
+                    .font(.system(size: 13))
+                    .foregroundStyle(p.secondary)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
     }
 
     private func ring(age: GestationalAge, size: CGFloat) -> some View {
         ZStack {
-            ProgressRing(progress: age.ringProgress, lineWidth: size * 0.075)
-            EmojiBlob(emoji: entry.week?.emoji ?? "🌱", size: size * 0.7)
+            DayRing(progress: age.ringProgress, color: p.rose, track: p.roseTint, lineWidth: size * 0.08)
+            VStack(spacing: -2) {
+                Text("\(age.weeks)")
+                    .font(.system(size: size * 0.32, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(p.text)
+                Text("weeks")
+                    .font(.system(size: max(11, size * 0.12)))
+                    .foregroundStyle(p.secondary)
+            }
         }
         .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Week \(age.weeks)")
     }
 
     private func small(age: GestationalAge) -> some View {
-        VStack(spacing: 6) {
-            ring(age: age, size: 84)
-            VStack(spacing: 0) {
-                Text("Week \(age.weeks)")
-                    .font(.bloom(.headline, weight: .heavy))
-                    .foregroundStyle(Theme.text)
-                Text(daysToGoText(age))
-                    .font(.bloom(.caption2, weight: .bold))
-                    .foregroundStyle(Theme.blushDeep)
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            ring(age: age, size: 78)
+            Spacer(minLength: 6)
+            Text("Week \(age.weeks)")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(p.text)
+            Text(daysToGoText(age))
+                .font(.system(size: 13))
+                .monospacedDigit()
+                .foregroundStyle(p.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private func medium(age: GestationalAge, profile: PregnancyProfile) -> some View {
         HStack(spacing: 16) {
-            ring(age: age, size: 118)
-            VStack(alignment: .leading, spacing: 4) {
-                WidgetCaption(text: age.trimesterTitle, color: Theme.sageDeep)
+            ring(age: age, size: 112)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(age.trimesterTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(p.secondary)
                 Text(age.headline)
-                    .font(.bloom(.title3, weight: .heavy))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(p.text)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
                 if let week = entry.week {
                     Text("\(profile.babyName) is \(week.sizeSentence)")
-                        .font(.bloom(.caption, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(p.secondary)
                         .lineLimit(2)
+                        .minimumScaleFactor(0.85)
                 }
                 Spacer(minLength: 2)
-                WidgetChip(text: daysToGoText(age), symbol: "heart.fill", tint: Theme.blushDeep, fill: Theme.blushSoft)
+                Text(daysToGoText(age))
+                    .font(.system(size: 13, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(p.rose)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(p.roseTint, in: .capsule)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

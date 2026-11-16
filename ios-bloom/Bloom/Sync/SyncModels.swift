@@ -9,7 +9,7 @@ nonisolated enum FollowMode: String, Codable, CaseIterable, Identifiable {
     case appOnly = "app_only"
 
     var id: String { rawValue }
-    var title: String { self == .live ? "Live Activity + alerts" : "App only" }
+    var title: String { self == .live ? "Live + alerts" : "App only" }
 }
 
 nonisolated struct AccountMember: Codable, Equatable, Identifiable {
@@ -36,7 +36,7 @@ nonisolated struct SyncAccount: Codable, Equatable {
 nonisolated struct SyncOp: Codable, Equatable {
     nonisolated enum Kind: String, Codable, CaseIterable {
         // Order = flush order: templates and rules need their medications on the server first.
-        case profile, medication, template, rule, plan, follow, milestone, dose
+        case profile, medication, template, rule, plan, follow, milestone, dose, medText
 
         var order: Int { Kind.allCases.firstIndex(of: self) ?? 0 }
     }
@@ -208,6 +208,14 @@ nonisolated struct RemoteDayRoutineRow: Decodable {
     var wake_time: String?
     var bed_time: String?
     var meals: [Meal]?
+}
+
+/// `med_texts`: one person's "My rules" exactly as typed.
+nonisolated struct RemoteMedTextRow: Decodable {
+    var taker_id: UUID
+    var text: String
+    var updated_by: UUID?
+    var updated_at: Date?
 }
 
 // MARK: - Formatting helpers

@@ -157,6 +157,8 @@ struct RemoteState {
     var overrideDoses: [RemotePlannedDoseRow] = []
     /// "Just today" wake, bed and meals (`day_routines`) from yesterday on.
     var dayRoutines: [RemoteDayRoutineRow] = []
+    /// "My rules" texts as typed (`med_texts`), one per person.
+    var medTexts: [RemoteMedTextRow] = []
 }
 
 /// Lets the user reverse the last dose action from a toast.
@@ -208,6 +210,8 @@ final class AppStore {
     /// Set when a slot is completed by the user's action; the Meds tab presents the celebration.
     var celebration: SlotCelebration?
     var undoToast: UndoToast?
+    /// Bumped by "Delete all my data" so screens rebuild from scratch instead of keeping open editors.
+    var resetGeneration = 0
 
     /// Taken times cleared by an undo, by dose key, so an accidental undo is one tap to restore.
     /// Kept on this phone only; a new log of that dose clears its entry.
@@ -747,6 +751,7 @@ final class AppStore {
         for log in doseLogs where medications.contains(where: { $0.id == log.medicationID }) {
             enqueue(.dose, SyncOp.doseKey(medicationID: log.medicationID, scheduledAt: log.scheduledAt))
         }
+        for owner in medsText.keys { enqueue(.medText, owner.rawValue) }
         enqueueSchedulesForUpload()
         saveAndReschedule()
     }
@@ -906,8 +911,9 @@ final class AppStore {
         }
 
         let schedule = mergeRemoteSchedules(remote, medIDs: medIDs)
+        let textsChanged = mergeRemoteMedTexts(remote)
 
-        let changed = accountChanged || newProfile != profile || newMilestones != milestones || newMeds != medications
+        let changed = textsChanged || accountChanged || newProfile != profile || newMilestones != milestones || newMeds != medications
             || newFollows != followModes || newLogs.sorted(by: Self.logOrder) != doseLogs.sorted(by: Self.logOrder) || !onboardingComplete
             || schedule.templates != templates || schedule.rules != rules || schedule.overrides != overrides
         guard changed else { return }
@@ -1110,6 +1116,7 @@ final class AppStore {
         MedNotifications.removeAll()
         LiveActivityController.endAll()
         WidgetCenter.shared.reloadAllTimelines()
+        resetGeneration += 1
     }
 
     // MARK: - Persistence

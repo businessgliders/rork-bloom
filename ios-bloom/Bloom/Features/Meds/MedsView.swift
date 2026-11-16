@@ -1,22 +1,22 @@
 import SwiftUI
 
 enum MedsRoute: Hashable {
-    /// Meds & routines: medications, rules and routines in one place.
+    /// Meds & routines: My rules, routines and the day's list.
     case schedule(MedOwner)
+    /// The My rules editor, optionally at the line that names a medication.
+    case rules(MedOwner, focus: String?)
 }
 
-/// Meds tab: day picker, Right now card and the day as one time-ordered list.
-/// Wide (Duo inner display, landscape): Right now + day picker left, the list right, editor as a side panel.
+/// Board 1: Meds today. Title + streak, week strip, one status card, one list card.
+/// The signed-in person's meds; when they take none, the partner's day (still loggable).
+/// Open iPhone Duo (board 5): week, status and the Next card left; "Today" and the list right.
 struct MedsView: View {
     @Environment(AppStore.self) private var store
 
     @State private var selectedDay: Date = PregnancyMath.calendar.startOfDay(for: .now)
-    @State private var showEditor = false
-    @State private var editingMedication: Medication?
-    @State private var editorToken = UUID()
-    /// Whose meds are on screen when shared (nil = the default for this viewer).
-    @State private var personChoice: MedOwner?
     @State private var showQuiz = false
+    @State private var showProgress = false
+    @State private var sheetMed: Medication?
     @State private var path = NavigationPath()
     /// An older log waiting for "Undo … taken at …?" confirmation.
     @State private var pendingUndo: DoseInstance?
@@ -26,82 +26,37 @@ struct MedsView: View {
     private var isToday: Bool { cal.isDate(selectedDay, inSameDayAs: today) }
     private var isFuture: Bool { selectedDay > today }
 
-    /// Shared: one person's meds at a time. Single phone: everything.
-    private var person: MedOwner? { store.isShared ? (personChoice ?? store.defaultMedsPerson) : nil }
+    private var owner: MedOwner { store.medsPerson }
+    private var meds: [Medication] { store.meds(of: owner) }
 
-    /// Whose routine Add and Schedule work on.
-    private var owner: MedOwner { person ?? store.viewerRole }
-
-    private var visibleMedications: [Medication] {
-        guard let person else { return store.medications }
-        return store.medications.filter { $0.owner == person }
-    }
-
-    /// The name used in "you" wording when the meds on screen aren't the viewer's.
-    private var personName: String? {
-        guard let person, person != store.viewerRole else { return nil }
-        return store.name(for: person)
-    }
-
-    private func visibleInstances(on day: Date) -> [DoseInstance] {
-        MedsEngine.instances(on: day, medications: visibleMedications, logs: store.doseLogs)
-    }
-
-    private var visibleCarryOver: [DoseInstance] {
-        MedsEngine.carryOver(into: today, medications: visibleMedications, logs: store.doseLogs)
-    }
-
-    @ViewBuilder
-    private var personSwitcher: some View {
-        if store.isShared {
-            MedsPersonSwitcher(selection: Binding(
-                get: { person ?? store.viewerRole },
-                set: { personChoice = $0 }
-            ))
-            .padding(.horizontal, 20)
-        }
+    private func instances(on day: Date) -> [DoseInstance] {
+        MedsEngine.instances(on: day, medications: meds, logs: store.doseLogs)
     }
 
     var body: some View {
         @Bindable var store = store
         NavigationStack(path: $path) {
             Group {
-                if store.medications.isEmpty {
+                if meds.isEmpty {
                     emptyState
                 } else {
                     content
-                        .environment(\.medsPerson, personName)
                         .onDisappear {
                             // Leaving with a shift not saved yet: the tab bar asks Just today / Every day.
                             if store.scheduleChange?.kind == .shift { store.shiftNeedsAnswer = true }
                         }
                 }
             }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    NavigationLink(value: MedsRoute.schedule(owner)) {
-                        Label("Meds & routines", systemImage: "list.bullet.rectangle")
-                    }
-                    .tint(Theme.textSecondary)
-                    .accessibilityIdentifier("meds-schedule")
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        startAdd()
-                    } label: {
-                        Label("Add", systemImage: "plus.circle.fill")
-                    }
-                    .tint(Theme.blushDeep)
-                    .accessibilityIdentifier("meds-add")
-                }
-            }
+            .navigationTitle("Meds today")
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
                 case .schedule(let who):
                     MedsOverviewView(owner: who)
+                case .rules(let who, let focus):
+                    MedsRoutinesView(owner: who, editing: true, focusName: focus, onApplied: {
+                        if !path.isEmpty { path.removeLast() }
+                    })
                 }
             }
         }
@@ -117,17 +72,22 @@ struct MedsView: View {
                 }
             }
         }
-        .inspector(isPresented: $showEditor) {
-            Group {
-                if let editingMedication {
-                    AddMedicationView(medication: editingMedication) { showEditor = false }
-                } else {
-                    QuickAddMedicationView { showEditor = false }
+        .sheet(isPresented: $showProgress) {
+            HowItsGoingView(owner: owner) { med in
+                showProgress = false
+                Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    path.append(MedsRoute.schedule(med?.owner ?? owner))
                 }
             }
-            .id(editorToken)
-            .inspectorColumnWidth(min: 340, ideal: 380, max: 440)
-            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $sheetMed) { med in
+            MedicationSheet(medication: med) { med in
+                Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    path.append(MedsRoute.rules(med.owner, focus: med.shortName))
+                }
+            }
         }
         .fullScreenCover(item: $store.celebration) { celebration in
             SlotCompleteView(celebration: celebration, headline: celebrationHeadline(celebration),
@@ -138,7 +98,7 @@ struct MedsView: View {
         .overlay(alignment: .bottom) {
             // Hold the toast (and its timer) until the celebration screen is closed.
             if let toast = store.undoToast, store.celebration == nil {
-                UndoToastView(toast: toast) {
+                DarkToast(message: toast.message) {
                     store.undo(medicationID: toast.medicationID, scheduledAt: toast.scheduledAt)
                 } onExpire: {
                     if store.undoToast?.id == toast.id { store.undoToast = nil }
@@ -146,6 +106,7 @@ struct MedsView: View {
                 .id(toast.id)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
+                .duoBarClearance()
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -170,133 +131,242 @@ struct MedsView: View {
         }
     }
 
+    // MARK: Content
+
+    @ViewBuilder
+    private var content: some View {
+        let list = instances(on: selectedDay)
+        AdaptiveColumns {
+            PaneScroll(pane: .primary, spacing: 18) {
+                header
+                weekStrip
+                status(list)
+                if isToday { nextCard }
+            }
+            .background(Theme.dayCanvas)
+        } secondary: {
+            ScrollViewReader { proxy in
+                PaneScroll(pane: .secondary, spacing: 14) {
+                    // Meds & routines lives once, next to the title in the left pane.
+                    Text(isToday ? "Today" : selectedDay.formatted(.dateTime.weekday(.wide)))
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(Theme.dayText)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.top, 6)
+                    dayList(list)
+                }
+                .modifier(RevealRowPanel(proxy: proxy))
+            }
+            .background(Theme.dayCanvas)
+        } compact: {
+            ScrollViewReader { proxy in
+                PaneScroll(spacing: 18) {
+                    header
+                    weekStrip
+                    status(list)
+                    dayList(list)
+                }
+                .modifier(RevealRowPanel(proxy: proxy))
+            }
+            .background(Theme.dayCanvas.ignoresSafeArea())
+        }
+        .background(Theme.dayCanvas.ignoresSafeArea())
+    }
+
+    /// "Meds today" + streak chip; Meds & routines sits top right.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center) {
+                Text(title)
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(Theme.dayText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                schedulingLink
+            }
+            HStack(spacing: 8) {
+                StreakChip(days: store.streak(owner).current) {
+                    Haptics.tap()
+                    showProgress = true
+                }
+                if owner != store.viewerRole {
+                    Text("\(store.name(for: owner))'s day")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.dayMuted)
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
     private var title: String {
         if isToday { return "Meds today" }
         return selectedDay.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 
-    // MARK: Content
-
-    @ViewBuilder
-    private var content: some View {
-        let instances = visibleInstances(on: selectedDay)
-        AdaptiveColumns {
-            ScrollView {
-                VStack(spacing: 20) {
-                    personSwitcher
-                    dayPicker
-                    overview(instances)
-                        .padding(.horizontal, 20)
-                }
-                .padding(.vertical, 8)
-                .padding(.bottom, 80)
-                // Not containerRelativeFrame: inside ArrangementView that resolves to the whole screen
-                // and pushes the pane past the fold.
-                .frame(maxWidth: .infinity)
-            }
-            .duoListClearance(pane: .primary)
-        } secondary: {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        listHeader(large: true)
-                        dayList(instances)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .padding(.bottom, 80)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .duoListClearance(pane: .secondary)
-                .modifier(RevealRowPanel(proxy: proxy))
-            }
-        } compact: {
-            ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 22) {
-                    personSwitcher
-                    dayPicker
-                    VStack(alignment: .leading, spacing: 14) {
-                        overview(instances)
-                        listHeader(large: false)
-                            .padding(.top, 8)
-                        dayList(instances)
-                    }
-                    .padding(.horizontal, 20)
-                }
-                .padding(.vertical, 8)
-                .padding(.bottom, 80)
-                .containerRelativeFrame(.horizontal)
-            }
-            .modifier(RevealRowPanel(proxy: proxy))
-            }
-            .background(BloomBackground())
+    private var schedulingLink: some View {
+        NavigationLink(value: MedsRoute.schedule(owner)) {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Theme.daySecondary)
+                .frame(width: 44, height: 44)
+                .background(Theme.dayCard, in: .circle)
         }
+        .accessibilityLabel("Meds & routines")
+        .accessibilityIdentifier("meds-schedule")
     }
 
-    private func listHeader(large: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(isToday ? (personName.map { "\($0)'s day" } ?? "Your day") : selectedDay.formatted(.dateTime.weekday(.wide)))
-                .font(.bloom(large ? .title2 : .title3, weight: .semibold))
-                .foregroundStyle(Theme.text)
-            Spacer()
-            routineMenu
-        }
+    private var weekStrip: some View {
+        WeekStrip(selection: $selectedDay, today: today) { day in store.dayMark(owner, on: day) }
     }
 
-    /// "Weekdays routine": on today, switch today to another routine; otherwise open Routines.
-    @ViewBuilder
-    private var routineMenu: some View {
-        if let active = store.activeTemplate(for: owner, on: selectedDay) {
-            let all = store.templates(for: owner)
-            Menu {
-                if isToday, all.count > 1 {
-                    Section("Today follows") {
-                        ForEach(all) { t in
-                            Button {
-                                store.switchRoutine(owner, on: selectedDay, to: t)
-                            } label: {
-                                if t.id == active.id {
-                                    Label("\(t.displayName) routine", systemImage: "checkmark")
-                                } else {
-                                    Text("\(t.displayName) routine")
-                                }
-                            }
-                            .accessibilityIdentifier("switch-routine-\(t.displayName)")
-                        }
-                    }
-                }
-                Button {
-                    path.append(MedsRoute.schedule(owner))
-                } label: {
-                    Label("Meds & routines", systemImage: "slider.horizontal.3")
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text("\(active.displayName) routine")
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .font(.bloom(.subheadline))
-                .foregroundStyle(Theme.blushDeep)
-            }
-            .accessibilityIdentifier("meds-open-routine")
+    // MARK: Status
+
+    private struct StatusText { var noFood: Bool; var trailing: String; var next: String }
+
+    private func statusText(_ list: [DoseInstance]) -> StatusText {
+        let carry = MedsEngine.carryOver(into: today, medications: meds, logs: store.doseLogs)
+        let state = MedsEngine.rightNow(instances: list, now: store.now, carryOver: carry)
+        var next: String
+        if let due = state.due.first {
+            next = "Due now: \(due.medication.shortName)"
+        } else if let n = state.next {
+            next = "Next: \(n.medication.shortName) at \(DayList.clock(n.anchor))"
+        } else if state.allDone {
+            next = "All done for today"
+        } else {
+            next = "Nothing else planned today"
+        }
+        switch state.food {
+        case .noFood(let w):
+            return StatusText(noFood: true, trailing: "until \(DayList.clock(w.end))", next: next)
+        case .holdForDose(let i, _, _):
+            next = "Take \(i.medication.shortName) first, then eat"
+            return StatusText(noFood: true, trailing: "for now", next: next)
+        case .foodOK(let window):
+            return StatusText(noFood: false, trailing: window.map { "No food from \(DayList.clock($0.start))" } ?? "", next: next)
         }
     }
 
     @ViewBuilder
-    private func dayList(_ instances: [DoseInstance]) -> some View {
-        if !store.hasRoutine(owner), !visibleMedications.isEmpty {
+    private func status(_ list: [DoseInstance]) -> some View {
+        if isToday {
+            let s = statusText(list)
+            VStack(spacing: 12) {
+                FoodStatusCard(noFood: s.noFood, trailing: s.trailing, next: s.next)
+                if let change = store.scheduleChange, change.placement == .top, change.owner == owner,
+                   cal.isDate(change.date, inSameDayAs: selectedDay) {
+                    ScheduleChangePanel(change: change)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
+        } else {
+            let done = list.filter { !$0.isPending }.count
+            HStack {
+                Text(isFuture ? "Planned" : "\(done) of \(list.count) logged")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.dayText)
+                Spacer()
+                Button("Back to today") {
+                    Haptics.select()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { selectedDay = today }
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.rose)
+                .frame(minHeight: 44)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(Theme.dayCard, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
+        }
+    }
+
+    /// Open Duo, left pane: the next dose with Taken, and "1 of 5" progress.
+    @ViewBuilder
+    private var nextCard: some View {
+        let list = instances(on: today)
+        let carry = MedsEngine.carryOver(into: today, medications: meds, logs: store.doseLogs)
+        let state = MedsEngine.rightNow(instances: list, now: store.now, carryOver: carry)
+        let target = state.due.first ?? state.next
+        VStack(alignment: .leading, spacing: 14) {
+            if let target {
+                Text(state.due.isEmpty ? "Next" : "Due now")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.dayMuted)
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(target.medication.shortName)
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(Theme.dayText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(DayList.clock(target.anchor))
+                            .font(.system(size: 17))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.rose)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        Haptics.success()
+                        store.markTaken(target, at: store.now, placement: .top)
+                    } label: {
+                        Text("Taken")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 22)
+                            .frame(minHeight: 48)
+                            .background(Theme.rose, in: .capsule)
+                    }
+                    .buttonStyle(PressableStyle())
+                    .accessibilityIdentifier("meds-next-taken")
+                }
+            } else {
+                Text(state.allDone ? "All done for today" : "Nothing else planned today")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.dayText)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(state.resolvedToday) of \(state.totalToday)")
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.daySecondary)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.dayDivider)
+                        Capsule().fill(Theme.greenCheck)
+                            .frame(width: state.totalToday == 0 ? 0 : geo.size.width * CGFloat(state.resolvedToday) / CGFloat(state.totalToday))
+                    }
+                }
+                .frame(height: 6)
+            }
+        }
+        .padding(18)
+        .background(Theme.dayCard, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: state.resolvedToday)
+        .accessibilityIdentifier("meds-next-card")
+    }
+
+    // MARK: List
+
+    @ViewBuilder
+    private func dayList(_ list: [DoseInstance]) -> some View {
+        if !store.hasRoutine(owner) {
             routinePrompt
         }
         MedsTodayList(
-            instances: instances,
+            instances: list,
             meals: shownMeals,
             day: selectedDay,
             owner: owner,
             canLog: !isFuture,
             now: isToday ? store.now : nil,
-            actions: doseActions
+            actions: doseActions,
+            onOpenMedication: { med in
+                Haptics.tap()
+                sheetMed = store.medications.first { $0.id == med.id } ?? med
+            }
         )
     }
 
@@ -307,25 +377,22 @@ struct MedsView: View {
             showQuiz = true
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: "sun.horizon")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(Theme.blushDeep)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Plan around your day")
-                        .font(.bloom(.headline, weight: .heavy))
-                        .foregroundStyle(Theme.text)
-                    Text("Tell Bloom when you wake, eat and sleep, then list your medications and rules.")
-                        .font(.bloom(.footnote))
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.dayText)
+                    Text("Tell Bloom when you wake, eat and sleep.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.daySecondary)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Theme.textSecondary)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.rose)
             }
             .padding(16)
-            .background(Theme.blushSoft, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
+            .background(Theme.roseTint, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
         }
         .buttonStyle(PressableStyle())
         .accessibilityIdentifier("meds-plan-routine")
@@ -338,39 +405,6 @@ struct MedsView: View {
             return change.meals
         }
         return store.meals(for: owner, on: selectedDay)
-    }
-
-    private var dayPicker: some View {
-        DayPicker(selection: $selectedDay, today: today) { day in
-            let instances = visibleInstances(on: day)
-            return (instances.filter { !$0.isPending }.count, instances.count)
-        }
-    }
-
-    @ViewBuilder
-    private func overview(_ instances: [DoseInstance]) -> some View {
-        if isToday {
-            VStack(spacing: 12) {
-                if store.hasRoutine(owner) {
-                    ShiftDayCard(owner: owner, day: selectedDay)
-                }
-                RightNowCard(
-                    instances: instances,
-                    carryOver: visibleCarryOver,
-                    onTaken: { store.markTaken($0, at: $1, placement: .top) },
-                    onSkip: { store.skip($0) },
-                    onChangeTaken: { store.changeTakenTime($0, to: $1, placement: .top) }
-                )
-                if let change = store.scheduleChange, change.placement == .top,
-                   cal.isDate(change.date, inSameDayAs: selectedDay), person == nil || change.owner == person {
-                    ScheduleChangePanel(change: change)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
-        } else {
-            DaySummaryCard(day: selectedDay, instances: instances, isFuture: isFuture)
-        }
     }
 
     private var doseActions: DoseActions {
@@ -387,7 +421,7 @@ struct MedsView: View {
                 }
             },
             changeTaken: { store.changeTakenTime($0, to: $1, placement: .row($0.medication.id)) },
-            edit: { med in openEditor(store.medications.first { $0.id == med.id } ?? med) }
+            edit: { med in sheetMed = store.medications.first { $0.id == med.id } ?? med }
         )
     }
 
@@ -401,27 +435,24 @@ struct MedsView: View {
 
     private var emptyState: some View {
         ZStack {
-            BloomBackground()
+            Theme.dayCanvas.ignoresSafeArea()
             CenteredScroll {
                 VStack(spacing: 16) {
-                    Image(systemName: "sun.horizon")
-                        .font(.system(size: 44, weight: .semibold))
-                        .foregroundStyle(Theme.blushDeep)
-                    Text(store.hasRoutine(owner) ? "List your medications" : "Set up your routine")
-                        .font(.bloom(.title, weight: .heavy))
-                        .foregroundStyle(Theme.text)
+                    Text(store.hasRoutine(owner) ? "Write your medications" : "Set up your routine")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(Theme.dayText)
                         .multilineTextAlignment(.center)
                     Text(store.hasRoutine(owner)
                          ? "Write them in one go with any rules about timing, food or each other. Bloom works out the times."
-                         : "A few questions about when you wake, eat and sleep. Then list your medications and Bloom places every dose around your day.")
-                        .font(.bloom(.body))
-                        .foregroundStyle(Theme.textSecondary)
+                         : "A few questions about when you wake, eat and sleep. Then write your medications and Bloom places every dose around your day.")
+                        .font(.system(size: 17))
+                        .foregroundStyle(Theme.daySecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 420)
                     Button {
                         startAdd()
                     } label: {
-                        Text(store.hasRoutine(owner) ? "List medications" : "Set up your routine")
+                        Text(store.hasRoutine(owner) ? "Write my medications" : "Set up your routine")
                     }
                     .buttonStyle(BloomPrimaryButtonStyle())
                     .frame(maxWidth: 360)
@@ -457,45 +488,6 @@ struct MedsView: View {
             return "\(percent)% of \(store.name(for: celebration.taker))'s doses logged today"
         }
         return "\(percent)% of today's doses logged"
-    }
-
-    private func openEditor(_ medication: Medication?) {
-        Haptics.tap()
-        editingMedication = medication
-        editorToken = UUID()
-        showEditor = true
-    }
-}
-
-// MARK: - Undo toast
-
-private struct UndoToastView: View {
-    var toast: UndoToast
-    var onUndo: () -> Void
-    var onExpire: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: toast.isSkip ? "minus.circle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(toast.isSkip ? Theme.surfaceMuted : Theme.sage)
-            Text(toast.message)
-                .font(.bloom(.subheadline, weight: .semibold))
-                .foregroundStyle(Theme.canvas)
-                .lineLimit(2)
-            Spacer(minLength: 4)
-            Button("Undo", action: onUndo)
-                .font(.bloom(.subheadline, weight: .heavy))
-                .foregroundStyle(Theme.toastAccent)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(Theme.text, in: .capsule)
-        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-        .frame(maxWidth: 520)
-        .task {
-            try? await Task.sleep(for: .seconds(8))
-            onExpire()
-        }
     }
 }
 

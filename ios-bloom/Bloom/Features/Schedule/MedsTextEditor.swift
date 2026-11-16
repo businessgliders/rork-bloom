@@ -27,6 +27,20 @@ final class MedsEditorController {
 
     func dismiss() { textView?.resignFirstResponder() }
 
+    /// Puts the caret at the end of the first line that names `name` (or line `index`) and starts typing there.
+    func focus(lineNamed name: String?, index: Int? = nil) {
+        guard let tv = textView else { return }
+        let lines = (tv.text ?? "").components(separatedBy: "\n")
+        var target = index
+        if target == nil, let name {
+            target = lines.firstIndex { $0.range(of: name, options: .caseInsensitive) != nil }
+        }
+        guard let line = target, line < lines.count else { return }
+        let offset = lines.prefix(line + 1).reduce(0) { $0 + $1.utf16.count + 1 } - 1
+        tv.becomeFirstResponder()
+        tv.selectedRange = NSRange(location: max(0, offset), length: 0)
+    }
+
     /// The line holding the caret while she is typing, or nil when the editor is not focused.
     var caretLine: String? {
         guard let tv = textView, tv.isFirstResponder else { return nil }
@@ -54,6 +68,8 @@ struct MedsTextEditor: UIViewRepresentable {
     var onFocus: (Bool) -> Void
     /// Vertical centre of each line (by "\n" line index), in the editor's coordinates.
     var onLineCenters: ([CGFloat]) -> Void
+    /// A medication name tapped while not typing.
+    var onNameTap: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -62,7 +78,7 @@ struct MedsTextEditor: UIViewRepresentable {
         tv.delegate = context.coordinator
         tv.isScrollEnabled = false
         tv.backgroundColor = .clear
-        tv.textContainerInset = UIEdgeInsets(top: 14, left: 12, bottom: 18, right: 40)
+        tv.textContainerInset = UIEdgeInsets(top: 14, left: 14, bottom: 18, right: 40)
         tv.font = Coordinator.font
         tv.adjustsFontForContentSizeCategory = true
         tv.autocapitalizationType = .sentences
@@ -74,9 +90,12 @@ struct MedsTextEditor: UIViewRepresentable {
         tv.accessibilityIdentifier = "meds-text-editor"
         tv.accessibilityLabel = "Your meds and rules"
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        tv.onLayout = { [weak coordinator = context.coordinator] in coordinator?.reportLines() }
+        tv.onLayout = { [weak coordinator = context.coordinator, weak tv, controller] in
+            coordinator?.reportLines()
+            tv?.claim(controller)
+        }
         tv.placeholderLabel.text = placeholder
-        controller.textView = tv
+        tv.claim(controller)
         context.coordinator.textView = tv
         tv.text = text
         context.coordinator.restyle()
@@ -87,7 +106,7 @@ struct MedsTextEditor: UIViewRepresentable {
         let coordinator = context.coordinator
         let namesChanged = coordinator.parent.names != names
         coordinator.parent = self
-        controller.textView = tv
+        tv.claim(controller)
         tv.placeholderLabel.text = placeholder
         if tv.text != text {
             tv.text = text
@@ -107,6 +126,57 @@ struct MedsTextEditor: UIViewRepresentable {
     final class EditorTextView: UITextView {
         var onLayout: (() -> Void)?
         let placeholderLabel = UILabel()
+        /// The line being typed, behind the text.
+        let lineHighlight = UIView()
+        var lastTouch: (point: CGPoint, at: Date)?
+
+        /// On screen, not a hidden copy (the open iPhone Duo lays out a hidden, full-width copy of a pane).
+        var isShowing: Bool {
+            guard let window, !bounds.isEmpty else { return false }
+            var view: UIView? = self
+            while let v = view {
+                if v.isHidden || v.alpha < 0.01 { return false }
+                view = v.superview
+            }
+            return convert(bounds, to: window).intersects(window.bounds)
+        }
+
+        /// Names picked above the keyboard go into the copy she is typing in, else the one she can see.
+        func claim(_ controller: MedsEditorController) {
+            guard controller.textView !== self else { return }
+            let current = controller.textView as? EditorTextView
+            if current == nil || isFirstResponder
+                || (current?.isFirstResponder != true && current?.isShowing != true && isShowing) {
+                controller.textView = self
+            }
+        }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            if let t = touches.first { lastTouch = (t.location(in: self), .now) }
+            super.touchesBegan(touches, with: event)
+        }
+
+        func updateHighlight() {
+            guard isFirstResponder, let end = selectedTextRange?.end else {
+                lineHighlight.isHidden = true
+                return
+            }
+            let ns = (text ?? "") as NSString
+            let loc = min(selectedRange.location, ns.length)
+            let lineRange = ns.lineRange(for: NSRange(location: loc, length: 0))
+            var rect = caretRect(for: end)
+            if let start = position(from: beginningOfDocument, offset: lineRange.location),
+               let stop = position(from: beginningOfDocument, offset: max(lineRange.location, NSMaxRange(lineRange) - (NSMaxRange(lineRange) > lineRange.location && ns.substring(with: lineRange).hasSuffix("\n") ? 1 : 0))),
+               let range = textRange(from: start, to: stop) {
+                let first = firstRect(for: range)
+                let last = caretRect(for: stop)
+                if !first.isNull, !first.isInfinite {
+                    rect = CGRect(x: 0, y: min(first.minY, last.minY), width: 0, height: max(first.maxY, last.maxY) - min(first.minY, last.minY))
+                }
+            }
+            lineHighlight.isHidden = false
+            lineHighlight.frame = CGRect(x: 6, y: rect.minY - 4, width: bounds.width - 12, height: rect.height + 8)
+        }
 
         override init(frame: CGRect, textContainer: NSTextContainer?) {
             super.init(frame: frame, textContainer: textContainer)
@@ -116,6 +186,12 @@ struct MedsTextEditor: UIViewRepresentable {
             placeholderLabel.textColor = UIColor(Theme.textSecondary)
             placeholderLabel.isAccessibilityElement = false
             addSubview(placeholderLabel)
+            lineHighlight.backgroundColor = UIColor(Theme.roseTint)
+            lineHighlight.layer.cornerRadius = 10
+            lineHighlight.layer.cornerCurve = .continuous
+            lineHighlight.isHidden = true
+            lineHighlight.isUserInteractionEnabled = false
+            insertSubview(lineHighlight, at: 0)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -127,6 +203,7 @@ struct MedsTextEditor: UIViewRepresentable {
             let width = bounds.width - inset.left - inset.right - pad * 2
             let size = placeholderLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
             placeholderLabel.frame = CGRect(x: inset.left + pad, y: inset.top, width: width, height: size.height)
+            sendSubviewToBack(lineHighlight)
             onLayout?()
         }
     }
@@ -137,6 +214,25 @@ struct MedsTextEditor: UIViewRepresentable {
         weak var textView: UITextView?
         private var lastCenters: [CGFloat] = []
         private var lastQuery: EditorQuery?
+        /// Where each tinted name sits, for taps while not typing.
+        private var tokens: [(range: NSRange, name: String)] = []
+
+        func textViewShouldBeginEditing(_ textView: UITextView) -> Bool {
+            guard let tv = textView as? EditorTextView, let touch = tv.lastTouch,
+                  Date.now.timeIntervalSince(touch.at) < 0.8,
+                  let pos = tv.closestPosition(to: touch.point) else { return true }
+            let offset = tv.offset(from: tv.beginningOfDocument, to: pos)
+            let caret = tv.caretRect(for: pos)
+            guard abs(caret.midY - touch.point.y) < caret.height else { return true }
+            if let hit = tokens.first(where: { offset > $0.range.location && offset < NSMaxRange($0.range) }) {
+                tv.lastTouch = nil
+                let callback = parent.onNameTap
+                let name = hit.name
+                Task { @MainActor in callback(name) }
+                return false
+            }
+            return true
+        }
 
         static var font: UIFont { UIFont.preferredFont(forTextStyle: .body) }
 
@@ -148,16 +244,20 @@ struct MedsTextEditor: UIViewRepresentable {
             (textView as? EditorTextView)?.placeholderLabel.isHidden = !textView.text.isEmpty
             updateQuery()
             reportLines()
+            (textView as? EditorTextView)?.updateHighlight()
             revealCaret()
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            (textView as? EditorTextView)?.updateHighlight()
             updateQuery()
             revealCaret()
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.onFocus(true)
+            (textView as? EditorTextView)?.claim(parent.controller)
+            (textView as? EditorTextView)?.updateHighlight()
             updateQuery()
             // Once the keyboard and the suggestion bar are up.
             Task { @MainActor in
@@ -181,6 +281,7 @@ struct MedsTextEditor: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.onFocus(false)
+            (textView as? EditorTextView)?.updateHighlight()
             // Keep the word's range: a suggestion tap can land just as focus leaves.
             let range = parent.controller.wordRange
             setQuery(nil, range: range)
@@ -195,27 +296,30 @@ struct MedsTextEditor: UIViewRepresentable {
             paragraph.paragraphSpacing = 8
             let base: [NSAttributedString.Key: Any] = [
                 .font: Self.font,
-                .foregroundColor: UIColor(Theme.text),
+                .foregroundColor: UIColor(Theme.dayText),
                 .paragraphStyle: paragraph,
             ]
             let styled = NSMutableAttributedString(string: tv.text ?? "", attributes: base)
             let full = NSRange(location: 0, length: styled.length)
-            let tokenFont = UIFont.systemFont(ofSize: Self.font.pointSize, weight: .semibold)
+            let tokenFont = UIFont.systemFont(ofSize: Self.font.pointSize, weight: .medium)
             var taken = IndexSet()
-            for name in parent.names.sorted(by: { $0.count > $1.count }) where name.count >= 2 {
-                let pattern = "(?<![\\p{L}\\p{N}])@?" + NSRegularExpression.escapedPattern(for: name) + "(?![\\p{L}\\p{N}])"
+            var found: [(range: NSRange, name: String)] = []
+            let spelled = parent.names.flatMap { name in MedNameMatch.variants(name).map { ($0, name) } }
+            for (spelling, name) in spelled.sorted(by: { $0.0.count > $1.0.count }) where spelling.count >= 2 {
+                let pattern = "(?<![\\p{L}\\p{N}])@?" + NSRegularExpression.escapedPattern(for: spelling) + "(?![\\p{L}\\p{N}])"
                 guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
                 for match in regex.matches(in: styled.string, range: full) {
                     let r = match.range
                     guard !taken.intersects(integersIn: r.location..<NSMaxRange(r)) else { continue }
                     taken.insert(integersIn: r.location..<NSMaxRange(r))
+                    found.append((r, name))
                     styled.addAttributes([
-                        .backgroundColor: UIColor(Theme.blushSoft),
-                        .foregroundColor: UIColor(Theme.blushDeep),
+                        .foregroundColor: UIColor(Theme.rose),
                         .font: tokenFont,
                     ], range: r)
                 }
             }
+            tokens = found
             tv.attributedText = styled
             tv.typingAttributes = base
             if NSMaxRange(selected) <= styled.length { tv.selectedRange = selected }
@@ -300,3 +404,19 @@ extension MedsEditorController {
     }
 }
 
+
+/// The ways someone writes a saved name: "Progesterone AM" is also "Progesterone a.m." or "am".
+enum MedNameMatch {
+    nonisolated static func variants(_ name: String) -> [String] {
+        var out = [name]
+        let parts = name.split(separator: " ")
+        guard parts.count >= 2, let last = parts.last?.lowercased() else { return out }
+        let base = parts.dropLast().joined(separator: " ")
+        switch last.replacingOccurrences(of: ".", with: "") {
+        case "am": out += ["\(base) a.m.", "\(base) a.m", "\(base) am"]
+        case "pm": out += ["\(base) p.m.", "\(base) p.m", "\(base) pm"]
+        default: break
+        }
+        return out
+    }
+}
