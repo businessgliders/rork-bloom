@@ -14,6 +14,8 @@ struct ScheduleChange: Identifiable, Equatable {
         case routine
         /// She tapped a warning icon: rules already broken today.
         case review
+        /// She changed, added or removed a rule on a medication card.
+        case rule
     }
 
     enum Placement: Equatable {
@@ -23,6 +25,8 @@ struct ScheduleChange: Identifiable, Equatable {
         case top
         /// Inside a routine on the Routines screen.
         case routine(UUID)
+        /// Under a medication card on Meds & routines.
+        case medication(UUID)
     }
 
     enum Scope { case today, forward }
@@ -71,6 +75,15 @@ struct ScheduleChange: Identifiable, Equatable {
     var adjacent: [UUID: [Int]] = [:]
     /// A late evening dose moves tomorrow's doses: the change is for tomorrow only.
     var isNextDay = false
+    /// Rule edits: this person's whole rule set as it would be. Saved only on "Going forward".
+    var draftRules: [ScheduleRule]?
+    /// Rule edits: every routine of this person re-placed under `draftRules`.
+    var generated: [ScheduleTemplate] = []
+    /// Rule edits: "Matches my doctor or pharmacist" is on.
+    var confirmed = false
+
+    /// Rules are being added or changed: she confirms they match her doctor or pharmacist first.
+    var needsConfirmation: Bool { kind == .rule && !confirmed }
 
     var routine: EngineRoutine {
         EngineRoutine(wake: wake, bed: bed,
@@ -180,17 +193,18 @@ extension AppStore {
     }
 
     /// Rules whose medications are on the day; gap rules also when the other side is on the day before.
-    private func usableRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:]) -> [ScheduleRule] {
+    private func usableRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:],
+                             using draft: [ScheduleRule]? = nil) -> [ScheduleRule] {
         let routine = EngineRoutine(wake: 0, bed: 0, meals: [], adjacent: adjacent)
         let ids = Set(times.keys)
-        return rules(for: owner).filter { ScheduleEngine.applies($0, on: ids, routine: routine) }
+        return (draft ?? rules(for: owner)).filter { ScheduleEngine.applies($0, on: ids, routine: routine) }
             + ScheduleEngine.dayBounds(for: times.keys)
     }
 
     /// Rules that can still matter: they involve a dose not logged yet (or a meal she just moved).
     private func openRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:], fixed: Set<UUID>,
-                           mealsChanged: Bool) -> [ScheduleRule] {
-        usableRules(owner, times: times, adjacent: adjacent).filter { rule in
+                           mealsChanged: Bool, using draft: [ScheduleRule]? = nil) -> [ScheduleRule] {
+        usableRules(owner, times: times, adjacent: adjacent, using: draft).filter { rule in
             if times[rule.subjectID] != nil, !fixed.contains(rule.subjectID) { return true }
             if rule.target == .medication, let other = rule.targetMedicationID, times[other] != nil, !fixed.contains(other) { return true }
             return mealsChanged && (rule.target == .food || rule.target == .meal)
@@ -333,16 +347,46 @@ extension AppStore {
         scheduleChange = change
     }
 
+    /// A rule changed, added or removed on a medication card: every routine is re-placed under the new rules and
+    /// the result for `template` shows under the card. Nothing is saved until "Going forward" (or "Just today").
+    /// Rules back to exactly what's saved: the panel closes.
+    func proposeRuleChange(owner: MedOwner, template: ScheduleTemplate, rules newRules: [ScheduleRule],
+                           medicationID: UUID, title: String) {
+        if RuleSignature.same(newRules, rules(for: owner)) {
+            scheduleChange = nil
+            return
+        }
+        let generated = generateCycle(owner, rules: newRules)
+        guard let placed = generated.templates.first(where: { $0.id == template.id }) else { return }
+        let adjacent = ScheduleCycle.adjacent(for: placed, in: generated.templates)
+        let times = Dictionary(placed.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
+        let before = Dictionary(template.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
+        let today = PregnancyMath.calendar.startOfDay(for: now)
+        let wake = template.wake.minutesFromMidnight
+        var change = ScheduleChange(
+            kind: .rule, placement: .medication(medicationID), owner: owner, date: today,
+            templateID: template.id, routineName: template.displayName, subjectID: medicationID, subjectName: title,
+            wake: wake, bed: template.bed.minutesFromMidnight, meals: template.meals.sorted { $0.time < $1.time },
+            mealsChanged: true, times: times, original: before, fixed: [],
+            pinned: Set(template.doses.filter(\.pinned).map(\.medicationID)), range: wake...max(template.bed.minutesFromMidnight, wake),
+            draft: template, canApplyToday: activeTemplate(for: owner, on: today)?.id == template.id, adjacent: adjacent
+        )
+        change.draftRules = newRules
+        change.generated = generated.templates
+        refreshProblems(&change)
+        scheduleChange = change
+    }
+
     /// Recomputes what's broken, the one-tap fixes and the summary line.
     private func refreshProblems(_ change: inout ScheduleChange) {
         let names = medicationNames
         let routine = change.routine
         let open = openRules(change.owner, times: change.times, adjacent: change.adjacent, fixed: change.fixed,
-                             mealsChanged: change.mealsChanged)
-        let usable = usableRules(change.owner, times: change.times, adjacent: change.adjacent)
+                             mealsChanged: change.mealsChanged, using: change.draftRules)
+        let usable = usableRules(change.owner, times: change.times, adjacent: change.adjacent, using: change.draftRules)
         let violations = ScheduleEngine.violations(times: change.times, routine: routine, rules: open, names: names)
         change.suggestion = nil
-        if let id = change.subjectID, change.kind == .dose || change.kind == .routine, let t = change.times[id],
+        if let id = change.subjectID, change.kind == .dose || change.kind == .routine || change.kind == .rule, let t = change.times[id],
            violations.contains(where: { $0.rule.involves(id) }),
            let best = ScheduleEngine.closestValid(for: id, near: t, times: change.times, routine: routine, rules: usable, range: change.range),
            best != t {
@@ -352,14 +396,14 @@ extension AppStore {
         let subject = change.subjectID
         change.problems = violations.map { v in
             var fixes = ScheduleEngine.fixes(for: v, times: change.times, fixed: change.fixed, routine: routine, rules: usable,
-                                             names: names, range: change.range, allowSkip: change.kind != .routine,
+                                             names: names, range: change.range, allowSkip: change.kind != .routine && change.kind != .rule,
                                              pinned: change.pinned)
                 .filter { fix in
                     if case .move(let id, let t) = fix.kind, id == subject, t == suggestion { return false }
                     return true
                 }
             // On a routine there's no skipping: when no dose can move, offer the smallest change to the day itself.
-            if change.kind == .routine, fixes.isEmpty, suggestion == nil, let draft = change.draft {
+            if change.kind == .routine || change.kind == .rule, fixes.isEmpty, suggestion == nil, let draft = change.draft {
                 fixes = ScheduleEngine.routineFixes(for: v, times: change.times, meds: engineMeds(for: draft), routine: routine,
                                                     rules: usable, names: names)
             }
@@ -449,8 +493,13 @@ extension AppStore {
 
     /// "Just today" or "Today and every …" / "Going forward".
     func applyChange(_ scope: ScheduleChange.Scope) {
-        guard let change = scheduleChange else { return }
+        guard let change = scheduleChange, !change.needsConfirmation else { return }
         scheduleChange = nil
+        if change.kind == .rule, let draft = change.draft {
+            applyRuleChange(change, draft: draft, scope: scope)
+            Haptics.success()
+            return
+        }
         if change.kind == .routine, let draft = change.draft {
             applyRoutineChange(change, draft: draft, scope: scope)
             Haptics.success()
@@ -484,6 +533,34 @@ extension AppStore {
                 }
             }
             saveTemplate(t, regenerate: false)
+        case .today:
+            guard change.canApplyToday else { return }
+            writeDayOverride(change, meals: change.meals, wake: DoseTime(minutes: change.wake), bed: DoseTime(minutes: change.bed))
+            rebuildPlan()
+            saveAndReschedule()
+        }
+    }
+
+    /// Rule edits. Going forward: the rules are saved (confirmed) and every routine takes its new times.
+    /// Just today: today takes the new times; the saved rules stay as they were.
+    private func applyRuleChange(_ change: ScheduleChange, draft: ScheduleTemplate, scope: ScheduleChange.Scope) {
+        guard let newRules = change.draftRules else { return }
+        switch scope {
+        case .forward:
+            commitRules(change.owner, newRules)
+            var list = change.generated
+            var t = draft
+            for (id, m) in change.times {
+                if let i = t.doses.firstIndex(where: { $0.medicationID == id }) {
+                    t.doses[i].time = DoseTime(minutes: m)
+                } else {
+                    t.doses.append(TemplateDose(medicationID: id, time: DoseTime(minutes: m)))
+                }
+            }
+            if let i = list.firstIndex(where: { $0.id == t.id }) { list[i] = t } else { list.append(t) }
+            storeGenerated(list)
+            rebuildPlan()
+            saveAndReschedule()
         case .today:
             guard change.canApplyToday else { return }
             writeDayOverride(change, meals: change.meals, wake: DoseTime(minutes: change.wake), bed: DoseTime(minutes: change.bed))

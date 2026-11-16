@@ -79,11 +79,15 @@ struct TwoPaneLayout<Primary: View, Secondary: View>: View {
     }
 }
 
+/// Which side of a two-pane layout a scroll view sits in. The Duo's vertical bar sits on one screen edge,
+/// so only the pane next to that edge needs room for it.
+enum PaneSide { case single, primary, secondary }
+
 extension View {
     /// On iPhone Duo (iOS 27.1) a List's rows run under the floating title and the vertical bar,
     /// so give its scroll content margins there. Elsewhere it does nothing.
-    func duoListClearance() -> some View {
-        modifier(DuoListClearance())
+    func duoListClearance(pane: PaneSide = .single) -> some View {
+        modifier(DuoListClearance(pane: pane))
     }
 }
 
@@ -96,11 +100,12 @@ extension View {
 
 private struct DuoListClearance: ViewModifier {
     var barOnly = false
+    var pane: PaneSide = .single
 
     func body(content: Content) -> some View {
 #if canImport(SwiftUI, _version: 8.0.85)
         if #available(iOS 27.1, *) {
-            content.modifier(DuoListClearanceBars(barOnly: barOnly))
+            content.modifier(DuoListClearanceBars(barOnly: barOnly, pane: pane))
         } else {
             content
         }
@@ -114,22 +119,59 @@ private struct DuoListClearance: ViewModifier {
 @available(iOS 27.1, *)
 private struct DuoListClearanceBars: ViewModifier {
     var barOnly: Bool
+    var pane: PaneSide
     @Environment(\.toolbarVerticalEdge) private var edge
+
+    /// The pane touching the bar's edge: the leading pane for a leading bar, the trailing one for a trailing bar.
+    private func touchesBar(_ edge: HorizontalEdge) -> Bool {
+        switch pane {
+        case .single: true
+        case .primary: edge == .leading
+        case .secondary: edge == .trailing
+        }
+    }
 
     func body(content: Content) -> some View {
         if let edge, barOnly {
             content.padding(edge == .trailing ? .trailing : .leading, 72)
         } else if let edge {
+            let barSide: Edge.Set = edge == .trailing ? .trailing : .leading
+            let otherSide: Edge.Set = edge == .trailing ? .leading : .trailing
             content
                 .contentMargins(.top, 80, for: .scrollContent)
-                .contentMargins(edge == .trailing ? .trailing : .leading, 76, for: .scrollContent)
-                .contentMargins(edge == .trailing ? .leading : .trailing, 16, for: .scrollContent)
+                .contentMargins(barSide, touchesBar(edge) ? 76 : 16, for: .scrollContent)
+                .contentMargins(otherSide, 16, for: .scrollContent)
         } else {
             content
         }
     }
 }
 #endif
+
+/// A vertical scroll pane whose content is exactly as wide as the pane (minus Duo margins), so nothing is
+/// clipped on the right and no space goes unused. Each pane scrolls on its own.
+struct PaneScroll<Content: View>: View {
+    var pane: PaneSide = .single
+    var spacing: CGFloat = 18
+    var horizontalPadding: CGFloat = 20
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: spacing) {
+                content
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+            // Not containerRelativeFrame: inside ArrangementView that resolves to the whole screen,
+            // so each pane grew to 951 pt and the right one ran off the display.
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .duoListClearance(pane: pane)
+    }
+}
 
 /// Scroll container that vertically centres its content when it fits and scrolls
 /// when it doesn't (short landscape heights, large Dynamic Type).

@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var confirmDeleteAccount = false
     @State private var accountBusy = false
     @State private var accountError: String?
+    @State private var startOverOwner: MedOwner?
 
     var body: some View {
         NavigationStack {
@@ -43,6 +44,17 @@ struct SettingsView: View {
                         store.restoreSuggestions()
                         Haptics.success()
                     }
+                }
+
+                Section {
+                    startOverButton(store.viewerRole, title: store.isShared ? "My meds" : nil)
+                    if store.isShared {
+                        startOverButton(store.viewerRole.other, title: "\(store.name(for: store.viewerRole.other))'s meds")
+                    }
+                } header: {
+                    Text("Meds & routines")
+                } footer: {
+                    Text("Rewrite the whole plan as text, the way you did at setup. Day-to-day changes are easier on the Meds screen.")
                 }
 
                 Section("Notifications") {
@@ -158,6 +170,9 @@ struct SettingsView: View {
                 babyNickname = profile.babyNickname
                 exportURL = store.exportFile()
             }
+            .navigationDestination(item: $startOverOwner) { who in
+                MedsRoutinesView(owner: who, startOver: true, onApplied: { startOverOwner = nil })
+            }
             .alert("Reminders access is off", isPresented: $remindersDenied) {
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
@@ -218,6 +233,22 @@ struct SettingsView: View {
                 Text(accountError ?? "")
             }
         }
+    }
+
+    private func startOverButton(_ who: MedOwner, title: String?) -> some View {
+        Button {
+            startOverOwner = who
+        } label: {
+            HStack {
+                Label(title.map { "Start over from text · \($0)" } ?? "Start over from text", systemImage: "text.alignleft")
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.textCaption)
+            }
+        }
+        .accessibilityIdentifier("settings-start-over-\(who.rawValue)")
     }
 
     @ViewBuilder

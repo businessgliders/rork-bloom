@@ -93,16 +93,17 @@ extension AppStore {
     /// The engine's placement for every routine of one person, as one cycle across midnight.
     /// `replacing` stands in for the saved version of that routine (or is added when new).
     /// Returns the placed routines and each one's broken rules; nothing is saved.
-    func generateCycle(_ owner: MedOwner, replacing: [ScheduleTemplate] = []) -> (templates: [ScheduleTemplate], violations: [UUID: [RuleViolation]]) {
+    /// `rules` stands in for this person's saved rules (a rule edit not applied yet).
+    func generateCycle(_ owner: MedOwner, replacing: [ScheduleTemplate] = [], rules draftRules: [ScheduleRule]? = nil) -> (templates: [ScheduleTemplate], violations: [UUID: [RuleViolation]]) {
         var list = templates(for: owner)
         for t in replacing {
             if let i = list.firstIndex(where: { $0.id == t.id }) { list[i] = t } else { list.append(t) }
         }
-        return ScheduleCycle.generateAll(list, meds: { self.engineMeds(for: $0) }, rules: { self.rules(for: $0) })
+        return ScheduleCycle.generateAll(list, meds: { self.engineMeds(for: $0) }, rules: { draftRules ?? self.rules(for: $0) })
     }
 
     /// Writes regenerated routines back, marking the ones that changed for upload.
-    private func storeGenerated(_ list: [ScheduleTemplate]) {
+    func storeGenerated(_ list: [ScheduleTemplate]) {
         for t in list {
             if let index = templates.firstIndex(where: { $0.id == t.id }) {
                 guard templates[index] != t else { continue }
@@ -279,7 +280,7 @@ extension AppStore {
     }
 
     /// Food windows, the widget and the Live Activity read these fields; they come from the rules.
-    private func deriveFoodFields(_ id: UUID) {
+    func deriveFoodFields(_ id: UUID) {
         guard let index = medications.firstIndex(where: { $0.id == id }) else { return }
         let mine = rules.filter { $0.subjectID == id }
         var before = 0

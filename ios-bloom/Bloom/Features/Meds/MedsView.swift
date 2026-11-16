@@ -97,7 +97,7 @@ struct MedsView: View {
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
                 case .schedule(let who):
-                    MedsRoutinesView(owner: who)
+                    MedsScheduleContainer(owner: who)
                 }
             }
         }
@@ -186,9 +186,11 @@ struct MedsView: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.bottom, 80)
-                .frame(maxWidth: 560)
+                // Not containerRelativeFrame: inside ArrangementView that resolves to the whole screen
+                // and pushes the pane past the fold.
                 .frame(maxWidth: .infinity)
             }
+            .duoListClearance(pane: .primary)
         } secondary: {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -199,9 +201,9 @@ struct MedsView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
                     .padding(.bottom, 80)
-                    .frame(maxWidth: 560)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .duoListClearance(pane: .secondary)
                 .modifier(RevealRowPanel(proxy: proxy))
             }
         } compact: {
@@ -220,8 +222,7 @@ struct MedsView: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.bottom, 80)
-                .frame(maxWidth: 640)
-                .frame(maxWidth: .infinity)
+                .containerRelativeFrame(.horizontal)
             }
             .modifier(RevealRowPanel(proxy: proxy))
             }

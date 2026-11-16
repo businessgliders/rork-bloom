@@ -53,6 +53,7 @@ struct ScheduleChangePanel: View {
         case .logged: return "\(change.subjectName) logged"
         case .routine: return "\(change.routineName) routine updated"
         case .review: return change.skips.isEmpty ? "Times updated" : "Plan for today"
+        case .rule: return "\(change.subjectName) · new times"
         }
     }
 
@@ -145,13 +146,18 @@ struct ScheduleChangePanel: View {
             .font(.bloom(.subheadline))
             .foregroundStyle(Theme.text)
             .fixedSize(horizontal: false, vertical: true)
-        if change.kind != .routine || change.canApplyToday {
+        if change.kind == .rule {
+            confirmToggle
+        }
+        if (change.kind != .routine && change.kind != .rule) || change.canApplyToday {
             Button {
                 store.applyChange(.today)
             } label: {
                 Text(change.isNextDay ? "Just tomorrow" : "Just today")
             }
             .buttonStyle(BloomPrimaryButtonStyle())
+            .disabled(change.needsConfirmation)
+            .opacity(change.needsConfirmation ? 0.5 : 1)
             .accessibilityIdentifier("change-today")
         }
         HStack {
@@ -160,6 +166,8 @@ struct ScheduleChangePanel: View {
                 Button(forwardLabel) { store.applyChange(.forward) }
                     .buttonStyle(BloomSoftButtonStyle())
                     .font(.bloom(.subheadline, weight: .semibold))
+                    .disabled(change.needsConfirmation)
+                    .opacity(change.needsConfirmation ? 0.5 : 1)
                     .accessibilityIdentifier("change-forward")
             }
             Spacer()
@@ -169,8 +177,26 @@ struct ScheduleChangePanel: View {
         }
     }
 
+    /// Rules added or changed: she says they match what her doctor or pharmacist told her.
+    private var confirmToggle: some View {
+        Toggle(isOn: Binding(
+            get: { store.scheduleChange?.confirmed ?? false },
+            set: { on in
+                store.scheduleChange?.confirmed = on
+                Haptics.select()
+            }
+        )) {
+            Text("Matches my doctor or pharmacist")
+                .font(.bloom(.subheadline, weight: .semibold))
+                .foregroundStyle(Theme.text)
+        }
+        .tint(Theme.sageButton)
+        .frame(minHeight: 44)
+        .accessibilityIdentifier("change-confirm-rule")
+    }
+
     private var forwardLabel: String {
-        if change.kind == .routine { return "Going forward" }
+        if change.kind == .routine || change.kind == .rule { return "Going forward" }
         return "Today and every \(Self.everyName(change.routineName))"
     }
 

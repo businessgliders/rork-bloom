@@ -213,7 +213,12 @@ nonisolated enum ScheduleEngine {
     static func deficit(_ rule: ScheduleRule, times: [UUID: Int], routine: EngineRoutine) -> Int? {
         if rule.target == .medication, rule.relation == .apart {
             let minV = rule.minMinutes ?? 0
-            return closestApartPair(rule, times: times, routine: routine).map { max(0, minV - abs($0.subject - $0.other)) }
+            return closestApartPair(rule, times: times, routine: routine).map { pair in
+                let gap = abs(pair.subject - pair.other)
+                if gap < minV { return minV - gap }
+                if let maxV = rule.maxMinutes, maxV >= minV, gap > maxV { return gap - maxV }
+                return 0
+            }
         }
         guard let t = times[rule.subjectID] else { return nil }
         let minV = rule.minMinutes ?? 0
@@ -337,6 +342,12 @@ nonisolated enum ScheduleEngine {
             case .apart:
                 let pair = closestApartPair(rule, times: times, routine: routine) ?? (t, other)
                 let gap = abs(pair.subject - pair.other)
+                if let maxV = rule.maxMinutes, maxV >= minV, gap > maxV {
+                    message = "\(subject) and \(target) are now \(duration(gap)) apart; your rule is \(duration(minV))–\(duration(maxV))"
+                    let goal = t >= other ? other + maxV : other - maxV
+                    fix = "Closest fix: take \(subject) at \(clock(goal))."
+                    break
+                }
                 func when(_ m: Int) -> String { m < 0 ? " the night before" : m >= 1440 ? " the next day" : "" }
                 if pair.other < 0 || pair.other >= 1440 {
                     // Today's subject against the other medication on a neighbouring day.
@@ -449,14 +460,19 @@ nonisolated enum ScheduleEngine {
             if let maxV = rule.maxMinutes, rule.minMinutes != nil, minV > 0 {
                 return "\(duration(minV))–\(duration(maxV)) \(word) \(what)"
             }
-            if let maxV = rule.maxMinutes { return "at most \(duration(maxV)) \(word) \(what)" }
+            if let maxV = rule.maxMinutes { return "within \(duration(maxV)) \(word) \(what)" }
             return minV == 0 ? "\(word) \(what)" : "at least \(duration(minV)) \(word) \(what)"
         }
         let text: String
         switch (rule.target, rule.relation) {
         case (.medication, .after): text = gap("after", target)
         case (.medication, .before): text = gap("before", target)
-        case (.medication, .apart): text = "at least \(duration(minV)) apart from \(target)"
+        case (.medication, .apart):
+            if let maxV = rule.maxMinutes, maxV > minV {
+                text = "\(duration(minV))–\(duration(maxV)) apart from \(target)"
+            } else {
+                text = "at least \(duration(minV)) apart from \(target)"
+            }
         case (.medication, .with): text = "together with \(target)"
         case (.medication, .at): text = minV == 0 ? "together with \(target)" : "\(duration(minV)) after \(target)"
         case (.food, .before): text = "no food for \(duration(minV)) after"

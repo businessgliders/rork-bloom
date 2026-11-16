@@ -7,6 +7,10 @@ import SwiftUI
 /// Lines are read one at a time (cached, in parallel, 600 ms after typing stops); the engine places every time.
 struct MedsRoutinesView: View {
     var owner: MedOwner
+    /// Settings → "Start over from text": the text starts from her current plan.
+    var startOver = false
+    /// After "Update plan" (first setup flips to the plan screen; start over goes back).
+    var onApplied: (() -> Void)? = nil
 
     @Environment(AppStore.self) private var store
 
@@ -23,12 +27,6 @@ struct MedsRoutinesView: View {
     @State private var justUpdated = false
 
     @State private var selectedRoutine: UUID?
-    @State private var openCard: TimeCard?
-    @State private var showQuiz = false
-    @State private var renaming: ScheduleTemplate?
-    @State private var renameText = ""
-    @State private var daysFor: ScheduleTemplate?
-    @State private var pendingDelete: ScheduleTemplate?
     @State private var sheetMed: Medication?
 
     private let placeholder = """
@@ -49,12 +47,7 @@ struct MedsRoutinesView: View {
 
     private var assembled: RegimenAssembler.Result {
         _ = revision
-        var parses: [String: LineParse] = [:]
-        for line in lines {
-            let key = LineParseService.normalize(line)
-            if let p = parser.cached(line) { parses[key] = p }
-        }
-        return RegimenAssembler.assemble(text: text, parses: parses, existing: store.existingForAssembler(owner))
+        return RegimenAssembler.assemble(text: text, lineParses: parser.resolved(lines), existing: store.existingForAssembler(owner))
     }
 
     /// Names offered above the keyboard and tinted in the text: her meds, then new names from her lines.
@@ -74,58 +67,35 @@ struct MedsRoutinesView: View {
         let result = assembled
         let names = names(result)
         AdaptiveColumns {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    routineArea
-                    editorCard(names)
-                }
-                .padding(20)
-                .frame(maxWidth: 620)
-                .frame(maxWidth: .infinity)
+            PaneScroll(pane: .primary) {
+                RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine)
+                editorCard(names)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .duoListClearance()
         } secondary: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    consentCard
-                    understoodSection(result)
-                    confirmBar(result)
-                }
-                .padding(20)
-                .frame(maxWidth: 620)
-                .frame(maxWidth: .infinity)
+            PaneScroll(pane: .secondary) {
+                consentCard
+                understoodSection(result)
+                confirmBar(result)
             }
-            .duoListClearance()
         } compact: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    routineArea
-                    editorCard(names)
-                    consentCard
-                    understoodSection(result)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 24)
-                .frame(maxWidth: 640)
-                .frame(maxWidth: .infinity)
+            PaneScroll {
+                RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine)
+                editorCard(names)
+                consentCard
+                understoodSection(result)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .duoListClearance()
             .background(BloomBackground())
             .safeAreaInset(edge: .bottom) {
                 if !editorFocused {
-                    confirmBar(result).padding(.horizontal, 16).padding(.bottom, 8).duoBarClearance()
+                    compactConfirmBar(result).duoBarClearance()
                 }
             }
         }
         .safeAreaInset(edge: .bottom) {
             if editorFocused { suggestionBar(names).duoBarClearance() }
         }
-        .navigationTitle(isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines")
+        .navigationTitle(startOver ? "Start over from text" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines"))
         .navigationBarTitleDisplayMode(.inline)
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: openCard)
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: store.scheduleChange?.id)
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: editorFocused)
         .onAppear(perform: load)
@@ -138,336 +108,11 @@ struct MedsRoutinesView: View {
             justUpdated = false
             scheduleParse()
         }
-        .sheet(isPresented: $showQuiz) {
-            RoutineQuizView(owner: owner, template: nil, days: nil) { saved in
-                showQuiz = false
-                if let saved { selectedRoutine = saved.id }
-            }
-        }
-        .sheet(item: $daysFor) { t in
-            RoutineDaysSheet(templateID: t.id, owner: owner)
-                .presentationDetents([.height(300)])
-        }
         .sheet(item: $sheetMed) { med in
             MedDetailsSheet(medication: med) { id, newOwner in move(id, to: newOwner) }
         }
-        .alert("Rename routine", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Save") {
-                if var t = renaming {
-                    t.name = renameText.trimmingCharacters(in: .whitespaces)
-                    store.saveTemplate(t, regenerate: false)
-                    Haptics.select()
-                }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        }
-        .confirmationDialog("Delete the \(pendingDelete?.displayName ?? "") routine?",
-                            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
-                            titleVisibility: .visible) {
-            Button("Delete routine", role: .destructive) {
-                if let pendingDelete {
-                    store.deleteTemplate(pendingDelete)
-                    if selectedRoutine == pendingDelete.id { selectedRoutine = nil }
-                }
-                Haptics.warning()
-                pendingDelete = nil
-            }
-        } message: {
-            Text("Medications on those days won't have planned times until another routine covers them.")
-        }
     }
 
-    // MARK: Routine chips + time cards
-
-    @ViewBuilder
-    private var routineArea: some View {
-        if let t = routine {
-            VStack(alignment: .leading, spacing: 12) {
-                routineChips(selected: t)
-                timeCards(t)
-                if let change = store.scheduleChange, change.placement == .routine(t.id) {
-                    ScheduleChangePanel(change: change)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-        } else {
-            Button {
-                Haptics.tap()
-                showQuiz = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "sun.horizon.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(Theme.peachDeep)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Set up your routine")
-                            .font(.bloom(.headline, weight: .bold))
-                            .foregroundStyle(Theme.text)
-                        Text("When \(isViewer ? "you wake, eat and sleep" : "\(store.name(for: owner)) wakes, eats and sleeps"). Bloom places every dose around it.")
-                            .font(.bloom(.footnote))
-                            .foregroundStyle(Theme.textSecondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .padding(16)
-                .background(Theme.peachSoft, in: .rect(cornerRadius: Theme.cardRadius, style: .continuous))
-            }
-            .buttonStyle(PressableStyle())
-            .accessibilityIdentifier("templates-new")
-        }
-    }
-
-    private func routineChips(selected: ScheduleTemplate) -> some View {
-        let todayID = store.activeTemplate(for: owner, on: store.now)?.id
-        return ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                ForEach(templates) { t in
-                    let on = t.id == selected.id
-                    Button {
-                        Haptics.select()
-                        store.scheduleChange = nil
-                        openCard = nil
-                        selectedRoutine = t.id
-                    } label: {
-                        HStack(spacing: 5) {
-                            if t.id == todayID {
-                                Circle().fill(on ? Color.white : Theme.blushDeep).frame(width: 6, height: 6)
-                                    .accessibilityLabel("Today")
-                            }
-                            Text(t.displayName)
-                            if !store.violations(in: t).isEmpty {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(on ? .white : Theme.coralDeep)
-                                    .accessibilityLabel("A rule can't be met")
-                            }
-                        }
-                        .font(.bloom(.subheadline, weight: .semibold))
-                        .foregroundStyle(on ? .white : Theme.text)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(on ? Theme.roseButton : Theme.surface, in: .capsule)
-                        .overlay(Capsule().stroke(on ? .clear : Theme.ringTrack, lineWidth: 1))
-                    }
-                    .buttonStyle(PressableStyle())
-                    .accessibilityIdentifier("routine-\(t.displayName)")
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                    .accessibilityHint("Touch and hold to rename, change days, duplicate or delete.")
-                    .contextMenu {
-                        Button { renameText = t.displayName; renaming = t } label: { Label("Rename", systemImage: "pencil") }
-                        Button { daysFor = t } label: {
-                            Label("Change days · \(ScheduleTemplate.daysLabel(t.days))", systemImage: "calendar")
-                        }
-                        Button {
-                            Haptics.success()
-                            store.scheduleChange = nil
-                            selectedRoutine = store.duplicateTemplate(t).id
-                        } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                        Button(role: .destructive) { pendingDelete = t } label: { Label("Delete", systemImage: "trash") }
-                    }
-                }
-                Button {
-                    Haptics.tap()
-                    showQuiz = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Theme.blushDeep)
-                        .frame(width: 36, height: 36)
-                        .background(Theme.blushSoft, in: .circle)
-                }
-                .buttonStyle(PressableStyle())
-                .accessibilityLabel("New routine")
-                .accessibilityIdentifier("routine-add")
-            }
-            .padding(.vertical, 2)
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    enum TimeCard: Hashable {
-        case wake, bed, meal(UUID), addSnack
-    }
-
-    /// The routine with the pending change applied, so cards show what she just chose.
-    private func shown(_ t: ScheduleTemplate) -> ScheduleTemplate {
-        guard let change = store.scheduleChange, change.placement == .routine(t.id), let draft = change.draft else { return t }
-        return draft
-    }
-
-    @ViewBuilder
-    private func timeCards(_ original: ScheduleTemplate) -> some View {
-        let t = shown(original)
-        let meals = t.meals.sorted { $0.time < $1.time }
-        let hasSnack = meals.contains { $0.name.caseInsensitiveCompare("Snack") == .orderedSame }
-        VStack(alignment: .leading, spacing: 10) {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        card(.wake, title: "Wake", icon: "sunrise.fill", tint: Theme.peachDeep, time: t.wake)
-                        ForEach(meals) { meal in
-                            card(.meal(meal.id), title: meal.name, icon: mealIcon(meal.name), tint: Theme.sageDeep, time: meal.time)
-                                .contextMenu {
-                                    if meal.name.caseInsensitiveCompare("Snack") == .orderedSame {
-                                        Button(role: .destructive) {
-                                            var e = t
-                                            e.meals.removeAll { $0.id == meal.id }
-                                            openCard = nil
-                                            store.proposeRoutineChange(original: original, edited: e)
-                                        } label: { Label("Remove snack", systemImage: "minus.circle") }
-                                    }
-                                }
-                        }
-                        if !hasSnack { snackCard(original: original, shown: t) }
-                        card(.bed, title: "Bed", icon: "moon.fill", tint: Theme.blushDeep, time: t.bed)
-                    }
-                    .padding(.vertical, 2)
-                }
-                .scrollIndicators(.hidden)
-                .onChange(of: openCard) { _, card in
-                    if let card { withAnimation { proxy.scrollTo(card, anchor: .center) } }
-                }
-            }
-            if let open = openCard, let time = time(of: open, in: t) {
-                wheel(open, time: time, original: original, shown: t)
-                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
-            }
-        }
-    }
-
-    private func mealIcon(_ name: String) -> String {
-        switch name.lowercased() {
-        case "breakfast": "cup.and.saucer.fill"
-        case "snack": "carrot.fill"
-        default: "fork.knife"
-        }
-    }
-
-    private func time(of card: TimeCard, in t: ScheduleTemplate) -> DoseTime? {
-        switch card {
-        case .wake: t.wake
-        case .bed: t.bed
-        case .meal(let id): t.meals.first { $0.id == id }?.time
-        case .addSnack: nil
-        }
-    }
-
-    private func card(_ kind: TimeCard, title: String, icon: String, tint: Color, time: DoseTime) -> some View {
-        let open = openCard == kind
-        let parts = clockParts(time)
-        return Button {
-            Haptics.select()
-            openCard = open ? nil : kind
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(open ? .white : tint)
-                    Text(title)
-                        .font(.bloom(.caption, weight: .semibold))
-                        .foregroundStyle(open ? .white : Theme.textSecondary)
-                        .lineLimit(1)
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(parts.0)
-                        .font(.bloom(.title3, weight: .bold))
-                        .monospacedDigit()
-                    Text(parts.1)
-                        .font(.bloom(.caption2, weight: .semibold))
-                }
-                .foregroundStyle(open ? .white : Theme.text)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(minWidth: 82, alignment: .leading)
-            .background(open ? Theme.roseButton : Theme.surface, in: .rect(cornerRadius: 18, style: .continuous))
-            .shadow(color: Color(light: 0xC9A893, dark: 0x000000).opacity(open ? 0.25 : 0.10), radius: 10, y: 4)
-        }
-        .buttonStyle(PressableStyle())
-        .id(kind)
-        .accessibilityLabel("\(title), \(ScheduleEngine.clock(time.minutesFromMidnight))")
-        .accessibilityHint("Change the time")
-        .accessibilityIdentifier("time-card-\(title)")
-    }
-
-    private func snackCard(original: ScheduleTemplate, shown t: ScheduleTemplate) -> some View {
-        Button {
-            Haptics.tap()
-            var e = t
-            let snack = ScheduleMeal(name: "Snack", time: DoseTime(hour: 15, minute: 30), durationMinutes: 15)
-            e.meals.append(snack)
-            store.proposeRoutineChange(original: original, edited: e)
-            openCard = .meal(snack.id)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
-                    Image(systemName: "carrot.fill").font(.system(size: 11, weight: .bold))
-                    Text("Snack").font(.bloom(.caption, weight: .semibold))
-                }
-                .foregroundStyle(Theme.textSecondary)
-                Text("Add")
-                    .font(.bloom(.subheadline, weight: .bold))
-                    .foregroundStyle(Theme.sageDeep)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(minWidth: 72, minHeight: 58, alignment: .leading)
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Theme.textSecondary.opacity(0.4), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])))
-        }
-        .buttonStyle(PressableStyle())
-        .id(TimeCard.addSnack)
-        .accessibilityLabel("Add a snack (optional)")
-        .accessibilityIdentifier("time-card-add-snack")
-    }
-
-    private func clockParts(_ time: DoseTime) -> (String, String) {
-        let s = ScheduleEngine.clock(time.minutesFromMidnight)
-        let parts = s.split(separator: " ", maxSplits: 1).map(String.init)
-        return parts.count == 2 ? (parts[0], parts[1]) : (s, "")
-    }
-
-    private func wheel(_ kind: TimeCard, time: DoseTime, original: ScheduleTemplate, shown t: ScheduleTemplate) -> some View {
-        VStack(spacing: 0) {
-            DatePicker("Time", selection: Binding(
-                get: { time.date(on: .now) },
-                set: { date in
-                    let new = DoseTime(date: date)
-                    guard new != time else { return }
-                    var e = t
-                    switch kind {
-                    case .wake: e.wake = new
-                    case .bed: e.bed = new
-                    case .meal(let id):
-                        if let i = e.meals.firstIndex(where: { $0.id == id }) { e.meals[i].time = new }
-                    case .addSnack: return
-                    }
-                    store.proposeRoutineChange(original: original, edited: e)
-                }
-            ), displayedComponents: .hourAndMinute)
-            .datePickerStyle(.wheel)
-            .labelsHidden()
-            .frame(height: 150)
-            .clipped()
-            .accessibilityIdentifier("time-wheel")
-            Button("Done") {
-                Haptics.select()
-                openCard = nil
-            }
-            .font(.bloom(.subheadline, weight: .bold))
-            .tint(Theme.blushDeep)
-            .padding(.bottom, 10)
-        }
-        .frame(maxWidth: .infinity)
-        .background(Theme.surface, in: .rect(cornerRadius: 22, style: .continuous))
-    }
 
     // MARK: Editor
 
@@ -517,7 +162,7 @@ struct MedsRoutinesView: View {
                 let key = LineParseService.normalize(raw)
                 if !key.isEmpty, index < lineCenters.count {
                     Group {
-                        if parser.reading.contains(key) {
+                        if parser.isReading(index: index, in: lines) {
                             ShimmerPill()
                         } else if parser.failed[key] != nil {
                             Button {
@@ -530,7 +175,7 @@ struct MedsRoutinesView: View {
                                     .foregroundStyle(Theme.coralDeep)
                             }
                             .accessibilityLabel("Couldn't read this line. Try again")
-                        } else if parser.cached(raw) != nil {
+                        } else if parser.resolved(lines)[index] != nil {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(Theme.sage)
@@ -619,7 +264,7 @@ struct MedsRoutinesView: View {
                 Label("Before Bloom reads your lines", systemImage: "hand.raised.fill")
                     .font(.bloom(.headline, weight: .bold))
                     .foregroundStyle(Theme.text)
-                Text("Bloom sends each line you write, and nothing else, to Rork's AI service, which passes it through Vercel AI Gateway to DeepSeek (Anthropic Claude if that's slow). It only sorts the line into medications and rules; the times are worked out on this iPhone. No photos, names or dates. Nothing changes until you tap Update plan.")
+                Text("Bloom sends each line you write (with the lines just above it, so it knows which medication a line is about), and nothing else, to Rork's AI service, which passes it through Vercel AI Gateway to DeepSeek (Anthropic Claude if that's slow). It only sorts the line into medications and rules; the times are worked out on this iPhone. No photos, names or dates. Nothing changes until you tap Update plan.")
                     .font(.bloom(.footnote))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -718,6 +363,7 @@ struct MedsRoutinesView: View {
     }
 
     private struct UnderstoodRow {
+        var index: Int
         var key: String
         var raw: String
         var summary: RegimenAssembler.LineSummary?
@@ -727,7 +373,7 @@ struct MedsRoutinesView: View {
         lines.enumerated().compactMap { index, raw in
             let key = LineParseService.normalize(raw)
             guard !key.isEmpty else { return nil }
-            return UnderstoodRow(key: key, raw: raw, summary: result.lines.first { $0.index == index })
+            return UnderstoodRow(index: index, key: key, raw: raw, summary: result.lines.first { $0.index == index })
         }
     }
 
@@ -747,7 +393,7 @@ struct MedsRoutinesView: View {
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
                 }
-            } else if parser.reading.contains(row.key) {
+            } else if parser.isReading(index: row.index, in: lines) {
                 HStack(spacing: 8) {
                     ShimmerPill()
                     Text(row.key)
@@ -847,12 +493,76 @@ struct MedsRoutinesView: View {
         }
     }
 
+    /// Folded Duo and iPhone: one short row pinned at the bottom (space is reserved under the text),
+    /// so it never covers what she's reading.
+    @ViewBuilder
+    private func compactConfirmBar(_ result: RegimenAssembler.Result) -> some View {
+        let count = allRead ? store.pendingChangeCount(owner, assembled: result) : 0
+        if justUpdated {
+            Label("Plan updated", systemImage: "checkmark.circle.fill")
+                .font(.bloom(.subheadline, weight: .semibold))
+                .foregroundStyle(Theme.sageDeep)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(.regularMaterial)
+                .overlay(alignment: .top) { Divider() }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if count > 0, !result.drafts.isEmpty {
+            HStack(spacing: 12) {
+                Button {
+                    Haptics.select()
+                    confirmed.toggle()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: confirmed ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(confirmed ? Theme.sageButton : Theme.textSecondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(count == 1 ? "1 change ready" : "\(count) changes ready")
+                                .font(.bloom(.subheadline, weight: .bold))
+                                .foregroundStyle(Theme.text)
+                            Text("Matches my doctor or pharmacist")
+                                .font(.bloom(.caption))
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Matches my doctor or pharmacist")
+                .accessibilityValue(confirmed ? "On" : "Off")
+                .accessibilityAddTraits(.isToggle)
+                .accessibilityIdentifier("meds-text-confirm")
+                Button {
+                    update(result)
+                } label: {
+                    Text("Update plan")
+                        .font(.bloom(.subheadline, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 44)
+                        .background(Theme.roseButton.opacity(confirmed ? 1 : 0.45), in: .capsule)
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(!confirmed)
+                .accessibilityIdentifier("meds-text-update")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.regularMaterial)
+            .overlay(alignment: .top) { Divider() }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
     // MARK: Logic
 
     private func load() {
         guard !loaded else { return }
         loaded = true
-        text = store.medsTextOrFallback(for: owner)
+        text = startOver ? store.planText(owner) : store.medsTextOrFallback(for: owner)
         if selectedRoutine == nil { selectedRoutine = store.activeTemplate(for: owner, on: store.now)?.id }
         runParse()
     }
@@ -873,13 +583,15 @@ struct MedsRoutinesView: View {
         var current = lines
         // While a name is half-typed (suggestions showing), hold that line back: the AI would guess at
         // "Calcium with pr". It is read once she picks a name, types on, or leaves the line.
+        var holding: Set<String> = []
         if let q = query, !NameSuggestions.matches(q, in: names(assembled)).isEmpty,
-           let typing = editor.caretLine.map(LineParseService.normalize) {
-            current.removeAll { LineParseService.normalize($0) == typing }
+           let typing = editor.caretLine.map(LineParseService.normalize), !typing.isEmpty {
+            holding.insert(typing)
         }
+        current = lines
         let known = store.knownMedNames(owner)
         Task {
-            await parser.parse(lines: current, known: known)
+            await parser.parse(lines: current, known: known, holding: holding)
             revision += 1
         }
     }
@@ -891,6 +603,12 @@ struct MedsRoutinesView: View {
         confirmed = false
         justUpdated = true
         revision += 1
+        if let onApplied {
+            Task {
+                try? await Task.sleep(for: .seconds(0.9))
+                onApplied()
+            }
+        }
         Task {
             if await Permissions.notificationStatus() == .notDetermined {
                 _ = await Permissions.requestNotifications()
@@ -912,7 +630,7 @@ struct MedsRoutinesView: View {
                 let all = RegimenAssembler.lines(of: body)
                 let parsed = await parser.parse(lines: all, known: store.knownMedNames(who))
                 guard parser.isUpToDate(all) else { continue }
-                let result = RegimenAssembler.assemble(text: body, parses: parsed, existing: store.existingForAssembler(who))
+                let result = RegimenAssembler.assemble(text: body, lineParses: parsed, existing: store.existingForAssembler(who))
                 store.applyText(who, text: body, assembled: result, confirmed: true)
             }
             revision += 1
@@ -950,7 +668,7 @@ struct ShimmerPill: View {
 // MARK: - Routine days
 
 /// Long-press → Change days. A day belongs to one routine; picking another routine's day moves it.
-private struct RoutineDaysSheet: View {
+struct RoutineDaysSheet: View {
     var templateID: UUID
     var owner: MedOwner
     @Environment(AppStore.self) private var store
