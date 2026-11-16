@@ -2,12 +2,13 @@
   "$schema": "https://rork.com/schema/rork.json",
   "apps": [
     {
-      "name": "Bloom",
+      "name": "Carry",
       "path": "ios-bloom",
       "framework": "swift",
       "settings": {
+        "iosBundleId": "app.businessgliders.bloom",
         "swiftSibling": false,
-        "iosBundleId": "app.businessgliders.bloom"
+        "displayName": "Carry"
       }
     }
   ]
