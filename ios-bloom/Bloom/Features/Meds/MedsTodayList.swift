@@ -2,7 +2,9 @@ import SwiftUI
 
 /// The day as one simple list (board 1): time · dot · name · check circle.
 /// Meal and "No food until …" rows have no control. Taken rows are muted with a filled green check.
-/// Tap a time: inline wheel, then the rule check with Just today / Every day. Tap a name: the medication sheet.
+/// Tap a medication's time (today or a later day): − / + in 5 min steps and a full-day wheel; once she stops, an inline
+/// "Move … to …?" confirm (with the rule it would break, if any). Only Move changes that date; the routine stays.
+/// Tap a meal time: inline wheel, then the rule check with Just today / Every day. Tap a name: the medication sheet.
 /// Tap the circle to log; long-press it for Now / Planned time / Pick a time / Skip. The list always scrolls.
 struct MedsTodayList: View {
     var instances: [DoseInstance]
@@ -18,7 +20,11 @@ struct MedsTodayList: View {
     var onOpenMedication: (Medication) -> Void = { _ in }
 
     @Environment(AppStore.self) private var store
+    @Environment(\.revealInScroll) private var revealInScroll
+    private static let doseMoveScrollID = "dose-move-editor"
     @State private var picker: InlinePicker?
+    @State private var doseMove: DoseMove?
+    @State private var settle: Task<Void, Never>?
 
     fileprivate enum Entry: Identifiable {
         case dose(DoseInstance)
@@ -89,8 +95,6 @@ struct MedsTodayList: View {
             let med = instance.medication
             if let picker {
                 switch picker.mode {
-                case .move(let id, _, false) where id == med.id && instance.isPending:
-                    return DoseInstance(medication: med, scheduledAt: picker.time, log: nil)
                 case .log(let target) where target.id == instance.id:
                     var log = instance.log ?? DoseLog(medicationID: med.id, scheduledAt: instance.scheduledAt, status: .taken)
                     log.status = .taken
@@ -143,6 +147,15 @@ struct MedsTodayList: View {
                     pickerRow(picker)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+                if let doseMove, doseMove.entryID == entry.id {
+                    doseMoveEditor(doseMove)
+                        .id(Self.doseMoveScrollID)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        // Keep the steppers, wheel and confirm on screen as each one appears.
+                        .onAppear { revealInScroll?(Self.doseMoveScrollID) }
+                        .onChange(of: doseMove.wheel) { _, open in if open { revealInScroll?(Self.doseMoveScrollID) } }
+                        .onChange(of: doseMove.check != nil) { _, shown in if shown { revealInScroll?(Self.doseMoveScrollID) } }
+                }
                 if let panel, panel.0 == entry.id {
                     ScheduleChangePanel(change: panel.1)
                         .padding(.horizontal, 10)
@@ -155,6 +168,10 @@ struct MedsTodayList: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.85),
                    value: instances.map { "\($0.id)\($0.anchor.timeIntervalSince1970)\($0.status?.rawValue ?? "")" })
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picker?.entryID)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: doseMove?.entryID)
+        .animation(.spring(response: 0.35, dampingFraction: 0.88), value: doseMove?.wheel)
+        .animation(.spring(response: 0.35, dampingFraction: 0.88), value: doseMove?.check)
+        .onDisappear { settle?.cancel() }
         .animation(.easeOut(duration: 0.2), value: picker?.time)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
         .accessibilityIdentifier("meds-day-list")
@@ -199,8 +216,12 @@ struct MedsTodayList: View {
     }
 
     /// "3:00" for whole-hour-free times in the board's short style ("No food until 3:00").
+    /// In 24-hour locales the AM/PM-free style pads to "07:30", so use the list's own clock there.
     private func shortClock(_ date: Date) -> String {
-        date.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute())
+        let twelveHour = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current)?.contains("a") ?? true
+        return twelveHour
+            ? date.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute())
+            : DayList.clock(date)
     }
 
     private func doseRow(_ instance: DoseInstance, entryID: String) -> some View {
@@ -208,9 +229,9 @@ struct MedsTodayList: View {
         let movable = canMove(instance)
         let correctable = canLog && instance.isTaken
         let shown = previewInstances.first { $0.id == instance.id }?.anchor ?? instance.anchor
-        let editing = picker?.entryID == entryID
+        let editing = picker?.entryID == entryID || doseMove?.entryID == entryID
         let timeAction: (() -> Void)? = movable
-            ? { openMovePicker(entryID: entryID, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) }
+            ? { openDoseMove(entryID: entryID, instance: instance) }
             : correctable ? { openLogPicker(entryID: entryID, instance: instance) } : nil
         return DayRow(
             time: DayList.clock(shown),
@@ -274,9 +295,11 @@ struct MedsTodayList: View {
         return (c.hour ?? 0) * 60 + (c.minute ?? 0)
     }
 
-    /// Only today's medications Bloom plans, not yet logged, can move.
+    /// Today or a later day: medications Bloom plans, not yet logged, can move. Past days stay read-only.
     private func canMove(_ instance: DoseInstance) -> Bool {
-        isToday && canLog && instance.isPending && instance.medication.managed && store.hasRoutine(instance.medication.owner)
+        let cal = PregnancyMath.calendar
+        let editableDay = cal.startOfDay(for: day) >= cal.startOfDay(for: store.now)
+        return editableDay && instance.isPending && instance.medication.managed && store.hasRoutine(instance.medication.owner)
     }
 
     private func canMove(_ meal: ScheduleMeal, start: Date) -> Bool {
@@ -289,6 +312,7 @@ struct MedsTodayList: View {
     private func openMovePicker(entryID: String, id: UUID, owner: MedOwner, isMeal: Bool, at date: Date) {
         Haptics.select()
         store.scheduleChange = nil
+        closeDoseMove()
         if picker?.entryID == entryID { picker = nil; return }
         picker = InlinePicker(entryID: entryID, mode: .move(id: id, owner: owner, isMeal: isMeal), time: date)
     }
@@ -296,6 +320,7 @@ struct MedsTodayList: View {
     private func openLogPicker(entryID: String, instance: DoseInstance) {
         Haptics.select()
         store.scheduleChange = nil
+        closeDoseMove()
         if picker?.entryID == entryID, case .log = picker?.mode { picker = nil; return }
         let upper = logRange(instance, now: .now).upperBound
         let start = min(instance.log?.takenAt ?? store.takenTimeBeforeUndo(instance) ?? (isToday ? .now : instance.scheduledAt), upper)
@@ -361,6 +386,233 @@ struct MedsTodayList: View {
             store.proposeDayChange(owner: owner, day: day, edit: edit, placement: .row(id))
         }
     }
+
+    // MARK: Moving a dose (this date only)
+
+    private func openDoseMove(entryID: String, instance: DoseInstance) {
+        Haptics.select()
+        store.scheduleChange = nil
+        picker = nil
+        if doseMove?.entryID == entryID { closeDoseMove(); return }
+        let m = Int(instance.anchor.timeIntervalSince(PregnancyMath.calendar.startOfDay(for: day)) / 60)
+        let start = min(max(m, 0), 1439)
+        settle?.cancel()
+        doseMove = DoseMove(entryID: entryID, id: instance.medication.id, owner: instance.medication.owner,
+                            name: instance.medication.shortName, original: start, minutes: start)
+    }
+
+    private func closeDoseMove() {
+        settle?.cancel()
+        doseMove = nil
+    }
+
+    /// Sets the new time; the confirm appears once she has stopped changing it for a moment.
+    private func setDoseMinutes(_ m: Int) {
+        guard var move = doseMove else { return }
+        let clamped = min(max(m, 0), 1439)
+        guard clamped != move.minutes else { return }
+        move.minutes = clamped
+        move.check = nil
+        doseMove = move
+        settle?.cancel()
+        guard clamped != move.original else { return }
+        settle = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1100))
+            guard !Task.isCancelled, let current = doseMove, current.minutes == clamped else { return }
+            doseMove?.check = check(current)
+        }
+    }
+
+    /// What the new time would do: the rules it breaks (her drag wording) and any dose that settles with it.
+    private func check(_ move: DoseMove) -> DoseMove.Check {
+        let preview = store.previewDayChange(owner: move.owner, day: day, edit: .dose(move.id, move.minutes))
+        let names = store.medicationNames
+        var reasons: [String] = []
+        if let mine = preview?.broken[move.id] { reasons.append(mine) }
+        for (id, reason) in (preview?.broken ?? [:]).sorted(by: { (names[$0.key] ?? "") < (names[$1.key] ?? "") }) where id != move.id {
+            reasons.append("\(names[id] ?? "Medication") \(reason)")
+        }
+        let alongside = (preview?.moved ?? [:])
+            .sorted { $0.value < $1.value }
+            .map { "\(names[$0.key] ?? "Medication") moves to \(ScheduleEngine.clock($0.value))" }
+        return DoseMove.Check(minutes: move.minutes, reasons: Array(reasons.prefix(2)), alongside: alongside)
+    }
+
+    private func doseMoveEditor(_ move: DoseMove) -> some View {
+        let dayStart = PregnancyMath.calendar.startOfDay(for: day)
+        return VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                stepButton(icon: "minus", label: "5 minutes earlier", id: "move-minus") { setDoseMinutes((doseMove?.minutes ?? move.minutes) - 5) }
+                    .disabled(move.minutes <= 0)
+                Button {
+                    Haptics.select()
+                    doseMove?.wheel.toggle()
+                } label: {
+                    Text(ScheduleEngine.clock(move.minutes))
+                        .font(.system(size: 22, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(move.minutes == move.original ? Theme.dayText : Theme.rose)
+                        .contentTransition(.numericText(value: Double(move.minutes)))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .background(move.wheel ? Theme.roseTint : Theme.creamBox, in: .rect(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("New time, \(ScheduleEngine.clock(move.minutes))")
+                .accessibilityHint("Opens a wheel for any time of day")
+                .accessibilityIdentifier("move-time")
+                stepButton(icon: "plus", label: "5 minutes later", id: "move-plus") { setDoseMinutes((doseMove?.minutes ?? move.minutes) + 5) }
+                    .disabled(move.minutes >= 1439)
+            }
+            .animation(.snappy(duration: 0.2), value: move.minutes)
+
+            if move.wheel {
+                DatePicker("New time", selection: Binding(
+                    get: { dayStart.addingTimeInterval(Double(doseMove?.minutes ?? move.minutes) * 60) },
+                    set: { date in
+                        let c = PregnancyMath.calendar.dateComponents([.hour, .minute], from: date)
+                        setDoseMinutes((c.hour ?? 0) * 60 + (c.minute ?? 0))
+                    }
+                ), displayedComponents: .hourAndMinute)
+                .datePickerStyle(.wheel)
+                .labelsHidden()
+                .frame(maxHeight: 150)
+                .clipped()
+                .accessibilityIdentifier("move-wheel")
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if let check = move.check, check.minutes == move.minutes {
+                moveConfirm(move, check: check)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if move.minutes == move.original {
+                Button("Cancel") {
+                    Haptics.select()
+                    closeDoseMove()
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.daySecondary)
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("move-close")
+            } else {
+                // Holds the confirm's place quietly while she is still choosing.
+                Text("Stop to check this time")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.dayMuted)
+                    .frame(minHeight: 44)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .padding(.top, 2)
+    }
+
+    private func stepButton(icon: String, label: String, id: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.select()
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Theme.rose)
+                .frame(width: 48, height: 48)
+                .background(Theme.roseTint, in: .circle)
+                .contentShape(.circle)
+        }
+        .buttonStyle(PressableStyle())
+        .buttonRepeatBehavior(.enabled)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
+    }
+
+    private func moveConfirm(_ move: DoseMove, check: DoseMove.Check) -> some View {
+        let warning = !check.reasons.isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
+            ForEach(check.reasons, id: \.self) { reason in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle().fill(Theme.terraDot).frame(width: 7, height: 7).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                    Text(reason)
+                        .font(.system(size: 13))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.terraText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityIdentifier("move-reason")
+            }
+            Text("Move \(Text(move.name).bold()) to \(Text(ScheduleEngine.clock(move.minutes)).bold())?")
+                .font(.system(size: 17))
+                .monospacedDigit()
+                .foregroundStyle(Theme.dayText)
+                .fixedSize(horizontal: false, vertical: true)
+            if !check.alongside.isEmpty {
+                Text(check.alongside.joined(separator: " · "))
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.daySecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Only \(dayLabel). Your routine stays the same.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.dayMuted)
+            HStack(spacing: 10) {
+                Button("Cancel") {
+                    Haptics.select()
+                    closeDoseMove()
+                }
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.daySecondary, fill: Theme.creamBox))
+                .accessibilityIdentifier("move-cancel")
+                Spacer(minLength: 0)
+                Button {
+                    let id = move.id, owner = move.owner, minutes = move.minutes
+                    closeDoseMove()
+                    if warning { Haptics.warning() }
+                    store.moveDose(owner: owner, day: day, medicationID: id, to: minutes)
+                } label: {
+                    Label("Move", systemImage: warning ? "exclamationmark.triangle.fill" : "arrow.right")
+                        .labelStyle(MoveLabelStyle(showIcon: warning))
+                }
+                .buttonStyle(BloomSoftButtonStyle(tint: warning ? Theme.terraText : Theme.rose,
+                                                  fill: warning ? Theme.terraTint : Theme.roseTint))
+                .accessibilityIdentifier("move-confirm")
+            }
+        }
+        .padding(14)
+        .background(warning ? Theme.terraTint.opacity(0.45) : Theme.creamBox,
+                    in: .rect(cornerRadius: 14, style: .continuous))
+        .accessibilityIdentifier("move-confirm-panel")
+    }
+
+    private var dayLabel: String {
+        isToday ? "today" : day.formatted(.dateTime.weekday(.wide))
+    }
+}
+
+/// "Move", with a small warning sign in front when it would break a rule.
+private struct MoveLabelStyle: LabelStyle {
+    var showIcon: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            if showIcon { configuration.icon.font(.system(size: 13, weight: .semibold)) }
+            configuration.title
+        }
+    }
+}
+
+/// A dose time being changed from Meds today, before she confirms.
+private struct DoseMove: Equatable {
+    struct Check: Equatable {
+        var minutes: Int
+        var reasons: [String]
+        var alongside: [String]
+    }
+
+    var entryID: String
+    var id: UUID
+    var owner: MedOwner
+    var name: String
+    var original: Int
+    var minutes: Int
+    var wheel = false
+    var check: Check?
 }
 
 // MARK: - State

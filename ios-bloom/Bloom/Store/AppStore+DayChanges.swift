@@ -277,6 +277,16 @@ extension AppStore {
         return DragPreview(subjectID: subject, minutes: target, moved: moved, broken: broken)
     }
 
+    /// Meds today: one dose moves to `minutes` on `day` only; the routine stays the same. Doses that rules tie to it
+    /// settle around it the way a drag would; a broken rule is kept (she saw the reason and chose Move).
+    /// Saves the day override (synced to the partner), rebuilds the plan, and refreshes reminders, widgets and the Live Activity.
+    func moveDose(owner: MedOwner, day: Date, medicationID: UUID, to minutes: Int) {
+        guard proposeDayChange(owner: owner, day: day, edit: .dose(medicationID, minutes), placement: .row(medicationID)) != nil
+        else { return }
+        scheduleChange?.kept = true
+        applyChange(.today)
+    }
+
     // MARK: - Proposals
 
     /// Works out a change to one day and shows it inline. Returns nil when there is nothing to ask

@@ -72,6 +72,25 @@ extension AppStore {
         return (logged, planned, onTime)
     }
 
+    /// This week so far (the week strip's Sunday through now): doses due, taken, and missed.
+    /// Due = planned time has passed, or already logged. Missed = skipped, or still not logged an hour after its time.
+    func weekSummary(_ owner: MedOwner) -> (due: Int, taken: Int, missed: Int) {
+        let cal = PregnancyMath.calendar
+        let today = cal.startOfDay(for: now)
+        let sunday = PregnancyMath.addDays(-(cal.component(.weekday, from: today) - 1), to: today)
+        var due = 0, taken = 0, missed = 0
+        var day = sunday
+        while day <= today {
+            for i in instances(owner, on: day) where i.scheduledAt <= now || !i.isPending {
+                due += 1
+                if i.isTaken { taken += 1 }
+                else if i.isSkipped || i.scheduledAt < now.addingTimeInterval(-3600) { missed += 1 }
+            }
+            day = PregnancyMath.addDays(1, to: day)
+        }
+        return (due, taken, missed)
+    }
+
     /// The last `count` days, oldest first, each as its dose instances.
     func lastDays(_ owner: MedOwner, count: Int) -> [[DoseInstance]] {
         let today = PregnancyMath.calendar.startOfDay(for: now)

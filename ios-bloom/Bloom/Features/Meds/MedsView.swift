@@ -173,7 +173,7 @@ struct MedsView: View {
         .background(Theme.dayCanvas.ignoresSafeArea())
     }
 
-    /// "Meds today" + streak chip; Meds & routines sits top right.
+    /// "Meds today" + the streak summary line; Meds & routines sits top right.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
@@ -186,17 +186,17 @@ struct MedsView: View {
                 Spacer(minLength: 8)
                 schedulingLink
             }
-            HStack(spacing: 8) {
-                StreakChip(days: store.streak(owner).current) {
-                    Haptics.tap()
-                    showProgress = true
-                }
-                if owner != store.viewerRole {
-                    Text("\(store.name(for: owner))'s day")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.dayMuted)
-                }
+            if owner != store.viewerRole {
+                Text("\(store.name(for: owner))'s day")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.dayMuted)
             }
+            let week = store.weekSummary(owner)
+            StreakSummary(days: store.streak(owner).current, taken: week.taken, due: week.due, missed: week.missed) {
+                Haptics.tap()
+                showProgress = true
+            }
+            .padding(.top, -10)
         }
         .padding(.top, 8)
     }
@@ -493,12 +493,24 @@ struct MedsView: View {
 
 /// Scrolls a schedule-change panel that opens under a list row into view, so it is
 /// never left below the screen edge (on the open iPhone Duo the list fills its pane).
+extension EnvironmentValues {
+    /// Scrolls the surrounding day list so the view with this id sits fully on screen.
+    @Entry var revealInScroll: ((AnyHashable) -> Void)? = nil
+}
+
 private struct RevealRowPanel: ViewModifier {
     var proxy: ScrollViewProxy
     @Environment(AppStore.self) private var store
 
     func body(content: Content) -> some View {
-        content.onChange(of: store.scheduleChange?.id) { _, id in
+        content
+            .environment(\.revealInScroll) { id in
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(250))
+                    withAnimation(.smooth(duration: 0.4)) { proxy.scrollTo(id, anchor: .bottom) }
+                }
+            }
+            .onChange(of: store.scheduleChange?.id) { _, id in
             guard id != nil, let change = store.scheduleChange,
                   case .row = change.placement else { return }
             Task { @MainActor in

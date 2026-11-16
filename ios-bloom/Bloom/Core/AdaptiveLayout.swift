@@ -2,23 +2,30 @@ import SwiftUI
 
 /// Chooses between a single column and two side-by-side panes.
 ///
-/// Two panes are used only when the container is regular width AND wider than tall
+/// Two panes are used only when the container is regular width AND at least 800 pt wide
 /// (iPhone Duo inner display in landscape, iPad, large landscape iPhones). Everything
-/// else — regular iPhones, the Duo outer display, a tall inner display — gets the
+/// else — regular iPhones, the Duo outer display, the inner display in portrait — gets the
 /// single-column layout, so no function is ever hidden by a pose.
 ///
-/// The decision comes from size classes and the live container size, never from the
-/// device model or screen bounds, so it re-evaluates smoothly on fold, unfold and rotate.
+/// The decision comes from the size class and the live container width only, never the height
+/// (the keyboard shrinks it) or the device model, so it re-evaluates smoothly on fold, unfold and
+/// rotate. While `\.freezeAdaptiveColumns` is true (an editor has focus) the column count holds.
 struct AdaptiveColumns<Primary: View, Secondary: View, Compact: View>: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.freezeAdaptiveColumns) private var frozen
     @ViewBuilder var primary: Primary
     @ViewBuilder var secondary: Secondary
     @ViewBuilder var compact: Compact
 
-    @State private var size: CGSize = .zero
+    @State private var width: CGFloat = 0
+    @State private var heldWide: Bool?
+
+    private var measuredWide: Bool {
+        horizontalSizeClass == .regular && width >= 800
+    }
 
     private var isWide: Bool {
-        horizontalSizeClass == .regular && size.width > size.height && size.width >= 640
+        frozen ? (heldWide ?? measuredWide) : measuredWide
     }
 
     var body: some View {
@@ -39,13 +46,21 @@ struct AdaptiveColumns<Primary: View, Secondary: View, Compact: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onGeometryChange(for: CGSize.self) { proxy in
-            proxy.size
-        } action: { newSize in
-            size = newSize
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newWidth in
+            width = newWidth
+        }
+        .onChange(of: frozen, initial: true) { _, isFrozen in
+            heldWide = isFrozen ? measuredWide : nil
         }
         .animation(.smooth(duration: 0.35), value: isWide)
     }
+}
+
+extension EnvironmentValues {
+    /// Keeps `AdaptiveColumns` at its current column count (e.g. while a text editor has focus).
+    @Entry var freezeAdaptiveColumns: Bool = false
 }
 
 /// Two panes that sit on either side of the iPhone Duo fold.
@@ -89,6 +104,18 @@ extension View {
     func duoListClearance(pane: PaneSide = .single) -> some View {
         modifier(DuoListClearance(pane: pane))
     }
+
+    /// PaneScroll: room under the floating title only. Sideways the system's safe area already clears the bar,
+    /// so content runs to 20 pt from the bar's leading edge with the scroll indicator beside it.
+    fileprivate func duoPaneClearance(pane: PaneSide) -> some View {
+        modifier(DuoListClearance(pane: pane, paneScroll: true))
+    }
+
+    /// Inside PaneScroll: the bar sits a little inside the safe-area edge, so trim the bar-side padding to keep
+    /// a 20 pt gap to the bar itself rather than 30.
+    fileprivate func duoBarSideTrim(pane: PaneSide) -> some View {
+        modifier(DuoBarSideTrim(pane: pane))
+    }
 }
 
 extension View {
@@ -125,14 +152,58 @@ private struct DuoBarOnlyGate<Content: View>: View {
 }
 #endif
 
-private struct DuoListClearance: ViewModifier {
-    var barOnly = false
-    var pane: PaneSide = .single
+private struct DuoBarSideTrim: ViewModifier {
+    var pane: PaneSide
 
     func body(content: Content) -> some View {
 #if canImport(SwiftUI, _version: 8.0.85)
         if #available(iOS 27.1, *) {
-            content.modifier(DuoListClearanceBars(barOnly: barOnly, pane: pane))
+            content.modifier(DuoBarSideTrimBars(pane: pane))
+        } else {
+            content
+        }
+#else
+        content
+#endif
+    }
+}
+
+#if canImport(SwiftUI, _version: 8.0.85)
+@available(iOS 27.1, *)
+private struct DuoBarSideTrimBars: ViewModifier {
+    var pane: PaneSide
+    @Environment(\.toolbarVerticalEdge) private var edge
+
+    func body(content: Content) -> some View {
+        if let edge, pane.touchesBar(edge) {
+            content.padding(edge == .trailing ? .trailing : .leading, -10)
+        } else {
+            content
+        }
+    }
+}
+#endif
+
+extension PaneSide {
+    /// The pane touching the bar's edge: the leading pane for a leading bar, the trailing one for a trailing bar.
+    func touchesBar(_ edge: HorizontalEdge) -> Bool {
+        switch self {
+        case .single: true
+        case .primary: edge == .leading
+        case .secondary: edge == .trailing
+        }
+    }
+}
+
+private struct DuoListClearance: ViewModifier {
+    var barOnly = false
+    var pane: PaneSide = .single
+    var paneScroll = false
+
+    func body(content: Content) -> some View {
+#if canImport(SwiftUI, _version: 8.0.85)
+        if #available(iOS 27.1, *) {
+            content.modifier(DuoListClearanceBars(barOnly: barOnly, pane: pane, paneScroll: paneScroll))
         } else {
             content
         }
@@ -147,20 +218,17 @@ private struct DuoListClearance: ViewModifier {
 private struct DuoListClearanceBars: ViewModifier {
     var barOnly: Bool
     var pane: PaneSide
+    var paneScroll: Bool
     @Environment(\.toolbarVerticalEdge) private var edge
 
-    /// The pane touching the bar's edge: the leading pane for a leading bar, the trailing one for a trailing bar.
-    private func touchesBar(_ edge: HorizontalEdge) -> Bool {
-        switch pane {
-        case .single: true
-        case .primary: edge == .leading
-        case .secondary: edge == .trailing
-        }
-    }
+    private func touchesBar(_ edge: HorizontalEdge) -> Bool { pane.touchesBar(edge) }
 
     func body(content: Content) -> some View {
-        if let edge, barOnly {
-            content.padding(edge == .trailing ? .trailing : .leading, 72)
+        if barOnly {
+            // safeAreaInset bars already stop at the bar's safe-area edge; extra padding left a 72 pt gap.
+            content
+        } else if edge != nil, paneScroll {
+            content.contentMargins(.top, 80, for: .scrollContent)
         } else if let edge {
             let barSide: Edge.Set = edge == .trailing ? .trailing : .leading
             let otherSide: Edge.Set = edge == .trailing ? .leading : .trailing
@@ -189,6 +257,7 @@ struct PaneScroll<Content: View>: View {
                 content
             }
             .padding(.horizontal, horizontalPadding)
+            .duoBarSideTrim(pane: pane)
             .padding(.top, 8)
             .padding(.bottom, 24)
             // Not containerRelativeFrame: inside ArrangementView that resolves to the whole screen,
@@ -196,7 +265,7 @@ struct PaneScroll<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollDismissesKeyboard(.interactively)
-        .duoListClearance(pane: pane)
+        .duoPaneClearance(pane: pane)
     }
 }
 

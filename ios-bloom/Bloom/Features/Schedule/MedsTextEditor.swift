@@ -8,11 +8,17 @@ final class MedsEditorController {
     /// The word being typed (with its "@", if any), replaced by a picked name.
     fileprivate var wordRange: NSRange?
 
+    /// Replaces the word being typed (or an "@" mention) with `name`; with no word at the caret, inserts it
+    /// at the caret, with a space before it when the caret follows a letter.
     func insert(_ name: String) {
-        guard let tv = textView, let range = wordRange,
-              let ns = tv.text as NSString?, NSMaxRange(range) <= ns.length else { return }
+        guard let tv = textView, let ns = tv.text as NSString? else { return }
+        let caret = tv.selectedRange
+        let range = wordRange ?? NSRange(location: min(caret.location, ns.length), length: min(caret.length, max(0, ns.length - caret.location)))
+        guard NSMaxRange(range) <= ns.length else { return }
         let after = NSMaxRange(range) < ns.length ? ns.substring(with: NSRange(location: NSMaxRange(range), length: 1)) : ""
-        let insertion = name + (after == " " ? "" : " ")
+        let needsSpaceBefore = wordRange == nil && range.location > 0
+            && !CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(ns.character(at: range.location - 1)) ?? " ")
+        let insertion = (needsSpaceBefore ? " " : "") + name + (after == " " ? "" : " ")
         guard let start = tv.position(from: tv.beginningOfDocument, offset: range.location),
               let end = tv.position(from: start, offset: range.length),
               let textRange = tv.textRange(from: start, to: end) else { return }

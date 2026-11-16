@@ -3,7 +3,18 @@ import SwiftUI
 // Shared pieces of the day list (boards 1–6): time · dot · name · trailing control.
 
 enum DayList {
-    static let timeWidth: CGFloat = 78
+    /// Gap between the time column and the dot, on every list.
+    static let timeGap: CGFloat = 12
+    /// Wide enough for the widest time in her locale at 15 pt tabular digits ("12:00 PM", "23:58"), never shrunk.
+    static let timeLabelWidth: CGFloat = {
+        let font = UIFont.monospacedDigitSystemFont(ofSize: 15, weight: .regular)
+        let samples = [0, 10 * 60 + 58, 12 * 60, 20 * 60 + 58, 22 * 60 + 58, 23 * 60 + 58, 11 * 60 + 58]
+            .map(ScheduleEngine.clock) + ["Now"]
+        let widest = samples.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 62
+        return ceil(widest) + 2
+    }()
+    /// Leading padding + time label + gap.
+    static var timeWidth: CGFloat { 16 + timeLabelWidth + timeGap }
     static let rowHeight: CGFloat = 56
     static let side: CGFloat = 20
 
@@ -54,7 +65,7 @@ struct DayRow<Trailing: View>: View {
                 .monospacedDigit()
                 .foregroundStyle(timeColor ?? (muted ? Theme.dayMuted : Theme.daySecondary))
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .fixedSize()
                 .contentTransition(.numericText())
             if let timeNote {
                 Text(timeNote)
@@ -65,9 +76,10 @@ struct DayRow<Trailing: View>: View {
                     .minimumScaleFactor(0.75)
             }
         }
-            .frame(width: DayList.timeWidth - 16, alignment: .leading)
+            .frame(width: DayList.timeLabelWidth, alignment: .leading)
             .frame(minHeight: 44)
             .contentShape(.rect)
+            .padding(.trailing, DayList.timeGap)
         if let timeAction {
             Button(action: timeAction) { label }
                 .buttonStyle(PressableStyle())
@@ -165,7 +177,8 @@ struct NowRule: View {
             Text("Now")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.rose)
-                .frame(width: DayList.timeWidth - 16, alignment: .leading)
+                .frame(width: DayList.timeLabelWidth, alignment: .leading)
+                .padding(.trailing, DayList.timeGap + 1)
             Circle().fill(Theme.rose).frame(width: 7, height: 7)
             Rectangle().fill(Theme.rose).frame(height: 1)
         }
@@ -193,26 +206,51 @@ struct DayDivider: View {
     }
 }
 
-/// "9-day streak ›" in green tint.
-struct StreakChip: View {
+/// One line under the title: "2-day streak · 9 of 10 this week · 1 missed ›".
+/// Streak in green, missed in terracotta (left out at 0). Opens How it's going.
+struct StreakSummary: View {
     var days: Int
+    var taken: Int
+    var due: Int
+    var missed: Int
     var action: () -> Void
+
+    private var line: Text {
+        // A green "0-day streak" reads like praise for nothing, so day zero is plain.
+        let streak = days == 0
+            ? Text("No streak yet").foregroundStyle(Theme.daySecondary)
+            : Text(days == 1 ? "1-day streak" : "\(days)-day streak")
+                .foregroundStyle(Theme.greenText)
+                .fontWeight(.semibold)
+        let dot = Text(" · ").foregroundStyle(Theme.dayMuted)
+        var out = streak
+        if due > 0 {
+            out = Text("\(out)\(dot)\(Text("\(taken) of \(due) this week").foregroundStyle(Theme.daySecondary))")
+        }
+        if missed > 0 {
+            out = Text("\(out)\(dot)\(Text("\(missed) missed").foregroundStyle(Theme.terraText).fontWeight(.semibold))")
+        }
+        return out
+    }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Text(days == 1 ? "1-day streak" : "\(days)-day streak")
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                line
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.dayMuted)
             }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Theme.greenText)
-            .padding(.horizontal, 12)
-            .frame(minHeight: 32)
-            .background(Theme.greenTint, in: .capsule)
+            .font(.system(size: 13))
             .frame(minHeight: 44)
             .contentShape(.rect)
         }
         .buttonStyle(PressableStyle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens How it's going")
         .accessibilityIdentifier("meds-streak")
     }
 }

@@ -129,6 +129,9 @@ struct MedsOverviewView: View {
         .toolbar {
             ToolbarItem(placement: .principal) { Text("") }
         }
+        // While a medication is lifted the tab bar (the Duo's side bar too) steps away; it returns on drop or cancel.
+        .toolbar(drag != nil ? .hidden : .visible, for: .tabBar)
+        .animation(.easeInOut(duration: 0.25), value: drag == nil)
         .safeAreaInset(edge: .bottom) {
             if let pendingDrop {
                 dropBar(pendingDrop)

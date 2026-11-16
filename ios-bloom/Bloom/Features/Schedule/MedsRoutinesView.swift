@@ -93,6 +93,8 @@ struct MedsRoutinesView: View {
                 if !editorFocused { updateBar(result, inline: false).duoBarClearance() }
             }
         }
+        // The keyboard must never flip one column to two (or back) while she types.
+        .environment(\.freezeAdaptiveColumns, editorFocused)
         .safeAreaInset(edge: .bottom) {
             if editorFocused { suggestionBar(names).duoBarClearance() }
         }
