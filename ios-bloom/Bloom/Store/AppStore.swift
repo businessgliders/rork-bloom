@@ -199,6 +199,8 @@ final class AppStore {
     var medsText: [MedOwner: String] = [:]
     /// Set after a dose is taken off-schedule; Today asks "Just today" or "Update my template".
     var scheduleChange: ScheduleChange?
+    /// She left Meds today with a "Shift my day" not saved: the tab bar asks Just today / Every day.
+    var shiftNeedsAnswer = false
 
     /// Modification date of the state file as last read or written by this process.
     private var knownFileDate: Date?

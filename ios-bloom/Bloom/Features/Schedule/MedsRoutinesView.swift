@@ -1,15 +1,16 @@
 import PhotosUI
 import SwiftUI
 
-/// Meds & routines, on one short screen:
+/// The meds & rules text editor: first setup, and later "Edit my meds & rules" (Meds & routines, Settings).
 /// routine chips → one row of day-anchor time cards → "Your meds & rules" (the only place to add,
 /// change or remove meds) → "What Bloom understood", one line per rule with problems inline.
+/// A line without a med name belongs to the med on the nearest line above; a blank line is a break.
 /// Lines are read one at a time (cached, in parallel, 600 ms after typing stops); the engine places every time.
 struct MedsRoutinesView: View {
     var owner: MedOwner
-    /// Settings → "Start over from text": the text starts from her current plan.
-    var startOver = false
-    /// After "Update plan" (first setup flips to the plan screen; start over goes back).
+    /// Opened from "Edit my meds & rules" (not first setup).
+    var editing = false
+    /// After "Update plan" (first setup flips to the overview; editing goes back).
     var onApplied: (() -> Void)? = nil
 
     @Environment(AppStore.self) private var store
@@ -94,7 +95,7 @@ struct MedsRoutinesView: View {
         .safeAreaInset(edge: .bottom) {
             if editorFocused { suggestionBar(names).duoBarClearance() }
         }
-        .navigationTitle(startOver ? "Start over from text" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines"))
+        .navigationTitle(editing ? "Edit my meds & rules" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines"))
         .navigationBarTitleDisplayMode(.inline)
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: store.scheduleChange?.id)
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: editorFocused)
@@ -562,7 +563,7 @@ struct MedsRoutinesView: View {
     private func load() {
         guard !loaded else { return }
         loaded = true
-        text = startOver ? store.planText(owner) : store.medsTextOrFallback(for: owner)
+        text = store.medsTextOrFallback(for: owner)
         if selectedRoutine == nil { selectedRoutine = store.activeTemplate(for: owner, on: store.now)?.id }
         runParse()
     }

@@ -36,6 +36,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct MainTabView: View {
     @Environment(SyncEngine.self) private var sync
+    @Environment(AppStore.self) private var store
     @State private var selection: AppTab = .journey
 
     var body: some View {
@@ -51,5 +52,36 @@ struct MainTabView: View {
         .sheet(item: Binding(get: { sync.welcome }, set: { sync.welcome = $0 })) { welcome in
             WelcomeSheetView(welcome: welcome)
         }
+        // She left Meds today with "Shift my day" not saved.
+        .confirmationDialog(shiftQuestion, isPresented: Binding(
+            get: { store.shiftNeedsAnswer && store.scheduleChange?.kind == .shift },
+            set: { if !$0 { store.shiftNeedsAnswer = false } }
+        ), titleVisibility: .visible) {
+            if let change = store.scheduleChange, change.kind == .shift {
+                Button("Just today") { answerShift(.today) }
+                Button(ScheduleChangePanel.everyLabel(change.routineName)) { answerShift(.forward) }
+                // Not the cancel role: iOS hides that one in this dialog, and she should see the way back.
+                Button("Put times back") {
+                    store.shiftNeedsAnswer = false
+                    store.discardChange()
+                }
+            }
+        } message: {
+            if let problem = store.scheduleChange?.problems.first {
+                Text(problem.reason)
+            }
+        }
+    }
+
+    private var shiftQuestion: String {
+        guard let change = store.scheduleChange, change.kind == .shift else { return "" }
+        let amount = ScheduleEngine.duration(abs(change.shift))
+        return "Keep everything \(amount) \(change.shift > 0 ? "later" : "earlier")?"
+    }
+
+    private func answerShift(_ scope: ScheduleChange.Scope) {
+        store.shiftNeedsAnswer = false
+        store.scheduleChange?.kept = true
+        store.applyChange(scope)
     }
 }

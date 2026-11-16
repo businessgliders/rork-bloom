@@ -54,6 +54,7 @@ struct ScheduleChangePanel: View {
         case .routine: return "\(change.routineName) routine updated"
         case .review: return change.skips.isEmpty ? "Times updated" : "Plan for today"
         case .rule: return "\(change.subjectName) · new times"
+        case .shift: return "Keep these times?"
         }
     }
 
@@ -197,11 +198,21 @@ struct ScheduleChangePanel: View {
 
     private var forwardLabel: String {
         if change.kind == .routine || change.kind == .rule { return "Going forward" }
-        return "Today and every \(Self.everyName(change.routineName))"
+        return Self.everyLabel(change.routineName)
+    }
+
+    /// "Every day", or "Every weekday" when this routine only covers some days.
+    static func everyLabel(_ routineName: String) -> String {
+        let name = everyName(routineName)
+        return name == "day" ? "Every day" : "Every \(name)"
     }
 
     private var undoLabel: String {
-        change.kind == .logged ? "Keep other times" : "Undo"
+        switch change.kind {
+        case .logged: "Keep other times"
+        case .shift: "Put back"
+        default: "Undo"
+        }
     }
 
     /// "Weekdays" → "weekday", "Weekend" → "weekend day", "Every day" → "day".

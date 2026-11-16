@@ -16,6 +16,8 @@ struct ScheduleChange: Identifiable, Equatable {
         case review
         /// She changed, added or removed a rule on a medication card.
         case rule
+        /// "Shift my day": everything not taken yet moves by the same amount.
+        case shift
     }
 
     enum Placement: Equatable {
@@ -27,6 +29,8 @@ struct ScheduleChange: Identifiable, Equatable {
         case routine(UUID)
         /// Under a medication card on Meds & routines.
         case medication(UUID)
+        /// Inside the Shift my day card.
+        case shift
     }
 
     enum Scope { case today, forward }
@@ -81,6 +85,10 @@ struct ScheduleChange: Identifiable, Equatable {
     var generated: [ScheduleTemplate] = []
     /// Rule edits: "Matches my doctor or pharmacist" is on.
     var confirmed = false
+    /// Shift my day: minutes everything not taken yet moves (negative = earlier).
+    var shift = 0
+    /// Shift my day: she tapped Done, so the Just today / Every day choice shows.
+    var asked = false
 
     /// Rules are being added or changed: she confirms they match her doctor or pharmacist first.
     var needsConfirmation: Bool { kind == .rule && !confirmed }
@@ -176,7 +184,20 @@ extension AppStore {
         if cal.isDateInToday(day) { lower = max(wake, ScheduleEngine.roundUp(minutes(.now))) }
         return DayState(template: r.template, wake: wake, bed: bed, meals: r.meals, times: times, fixed: fixed,
                         pinned: pinned, meds: meds, range: lower...max(bed, lower),
-                        adjacent: previousDayDoses(owner, before: day))
+                        adjacent: neighbourDoses(owner, around: day))
+    }
+
+    /// Yesterday's real doses and tomorrow's planned ones on `day`'s minute axis, so overnight gap rules
+    /// ("10–12 h apart") are checked across midnight the way the routine was planned.
+    func neighbourDoses(_ owner: MedOwner, around day: Date) -> [UUID: [Int]] {
+        var result = previousDayDoses(owner, before: day)
+        let cal = PregnancyMath.calendar
+        let start = cal.startOfDay(for: day)
+        guard let tomorrow = cal.date(byAdding: .day, value: 1, to: start) else { return result }
+        for item in instances(on: tomorrow) where item.medication.owner == owner && item.medication.managed && !item.isSkipped {
+            result[item.medication.id, default: []].append(Int(item.anchor.timeIntervalSince(start) / 60))
+        }
+        return result
     }
 
     /// The day before's doses on `day`'s minute axis: negative minutes, taken doses at the time taken
@@ -193,7 +214,7 @@ extension AppStore {
     }
 
     /// Rules whose medications are on the day; gap rules also when the other side is on the day before.
-    private func usableRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:],
+    func usableRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:],
                              using draft: [ScheduleRule]? = nil) -> [ScheduleRule] {
         let routine = EngineRoutine(wake: 0, bed: 0, meals: [], adjacent: adjacent)
         let ids = Set(times.keys)
@@ -202,7 +223,7 @@ extension AppStore {
     }
 
     /// Rules that can still matter: they involve a dose not logged yet (or a meal she just moved).
-    private func openRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:], fixed: Set<UUID>,
+    func openRules(_ owner: MedOwner, times: [UUID: Int], adjacent: [UUID: [Int]] = [:], fixed: Set<UUID>,
                            mealsChanged: Bool, using draft: [ScheduleRule]? = nil) -> [ScheduleRule] {
         usableRules(owner, times: times, adjacent: adjacent, using: draft).filter { rule in
             if times[rule.subjectID] != nil, !fixed.contains(rule.subjectID) { return true }
@@ -378,7 +399,7 @@ extension AppStore {
     }
 
     /// Recomputes what's broken, the one-tap fixes and the summary line.
-    private func refreshProblems(_ change: inout ScheduleChange) {
+    func refreshProblems(_ change: inout ScheduleChange) {
         let names = medicationNames
         let routine = change.routine
         let open = openRules(change.owner, times: change.times, adjacent: change.adjacent, fixed: change.fixed,
@@ -417,6 +438,10 @@ extension AppStore {
     private func summaryLine(_ change: ScheduleChange) -> String {
         let names = medicationNames
         var parts: [String] = []
+        if change.kind == .shift {
+            return change.shift == 0 ? "Times as planned"
+                : "Everything \(ScheduleEngine.duration(abs(change.shift))) \(change.shift > 0 ? "later" : "earlier") · gaps kept"
+        }
         let moved = change.times
             .filter { $0.key != change.subjectID && change.original[$0.key] != nil && change.original[$0.key] != $0.value }
             .sorted { $0.value < $1.value }
@@ -505,6 +530,11 @@ extension AppStore {
             Haptics.success()
             return
         }
+        if change.kind == .shift {
+            applyShift(change, scope: scope)
+            Haptics.success()
+            return
+        }
         writeDayOverride(change, meals: change.mealsChanged ? change.meals : nil, wake: nil, bed: nil)
         if scope == .forward, var t = templates.first(where: { $0.id == change.templateID }) {
             for (id, m) in change.times where !change.fixed.contains(id) || (change.kind == .logged && id == change.subjectID) {
@@ -571,7 +601,7 @@ extension AppStore {
 
     /// One day's times for every managed medication of this person. Logged doses keep their planned time
     /// so their logs stay attached; a medication missing here would vanish from the day.
-    private func writeDayOverride(_ change: ScheduleChange, meals: [ScheduleMeal]?, wake: DoseTime?, bed: DoseTime?) {
+    func writeDayOverride(_ change: ScheduleChange, meals: [ScheduleMeal]?, wake: DoseTime?, bed: DoseTime?) {
         let day = change.date
         let list = instances(on: day).filter { $0.medication.owner == change.owner && $0.medication.managed }
         var times: [UUID: DoseTime] = [:]

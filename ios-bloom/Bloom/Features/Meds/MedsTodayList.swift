@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// The day as one time-ordered list: medications (with a checkmark), "8:00–8:30 · No food" rows and meals.
-/// Today: tap an upcoming medication's or meal's time to pick a new one on an inline wheel.
-/// Changes show inline under the row; nothing is saved until she chooses. Rows never capture
-/// drags, so the list always scrolls.
+/// Today: "Move" (or the time) on an upcoming medication opens the Move sheet; a meal's time opens an inline wheel.
+/// Medications tied by rules share a coloured line on the left. Every control is a plain tap:
+/// no press-and-hold and no dragging, so the list always scrolls.
 struct MedsTodayList: View {
     var instances: [DoseInstance]
     var meals: [ScheduleMeal]
@@ -18,6 +18,9 @@ struct MedsTodayList: View {
 
     @Environment(AppStore.self) private var store
     @State private var picker: InlinePicker?
+    @State private var moveTarget: DoseInstance?
+
+    static let linkColors: [Color] = [Theme.peachDeep, Theme.sageDeep, Theme.blushDeep, Theme.coralDeep]
 
     fileprivate enum Entry: Identifiable {
         case dose(DoseInstance)
@@ -143,6 +146,7 @@ struct MedsTodayList: View {
         let entries = entries
         let warnings = warnings
         let panel = panelAnchor(entries)
+        let links = linkInfo
         VStack(spacing: 0) {
             if entries.isEmpty {
                 Text("Nothing planned on this day.")
@@ -155,7 +159,7 @@ struct MedsTodayList: View {
                 if index > 0, !isNow(entry), !isNow(entries[index - 1]) {
                     Divider().padding(.leading, 88)
                 }
-                row(entry, warnings: warnings)
+                row(entry, warnings: warnings, links: links)
                     .transition(.opacity)
                 if let picker, picker.entryID == entry.id {
                     pickerRow(picker)
@@ -176,6 +180,30 @@ struct MedsTodayList: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picker?.entryID)
         .animation(.easeOut(duration: 0.2), value: picker?.time)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
+        .sheet(item: $moveTarget) { instance in
+            MoveDoseSheet(instance: instance, day: day) { m in
+                let med = instance.medication
+                Task {
+                    // Let the sheet close first so the panel opens in view under the row.
+                    try? await Task.sleep(for: .milliseconds(350))
+                    store.proposeDayChange(owner: med.owner, day: day, edit: .dose(med.id, m), placement: .row(med.id))
+                }
+            }
+        }
+    }
+
+    /// Coloured line and "Linked to Thyroid" for medications tied together by rules.
+    private var linkInfo: [UUID: (color: Color, text: String)] {
+        var out: [UUID: (color: Color, text: String)] = [:]
+        let owners = Set(instances.filter { $0.medication.managed }.map(\.medication.owner))
+        for o in owners {
+            let groups = store.linkGroups(o)
+            for (id, group) in groups {
+                guard let text = store.linkText(for: id, owner: o) else { continue }
+                out[id] = (Self.linkColors[group % Self.linkColors.count], text)
+            }
+        }
+        return out
     }
 
     private func isNow(_ entry: Entry) -> Bool {
@@ -201,22 +229,23 @@ struct MedsTodayList: View {
     }
 
     @ViewBuilder
-    private func row(_ entry: Entry, warnings: Set<UUID>) -> some View {
+    private func row(_ entry: Entry, warnings: Set<UUID>, links: [UUID: (color: Color, text: String)]) -> some View {
         switch entry {
         case .dose(let instance):
             let med = instance.medication
             let movable = canMove(instance)
             let correctable = canLog && instance.isTaken
+            let open = { openMoveSheet(instance) }
             TodayDoseRow(
                 instance: instance,
                 canLog: canLog,
                 actions: actions,
                 previewMinutes: previewMinutes(instance),
-                isEditingTime: picker?.entryID == entry.id && (isMovePicker || correctable),
+                isEditingTime: picker?.entryID == entry.id && correctable,
                 hasWarning: instance.isPending && warnings.contains(med.id),
-                onTimeTap: movable
-                    ? { openMovePicker(entryID: entry.id, id: med.id, owner: med.owner, isMeal: false, at: instance.anchor) }
-                    : correctable ? { openLogPicker(entryID: entry.id, instance: instance) } : nil,
+                link: links[med.id],
+                onTimeTap: movable ? open : correctable ? { openLogPicker(entryID: entry.id, instance: instance) } : nil,
+                onMove: movable ? open : nil,
                 onWarning: { review(instance) },
                 onPickTime: { openLogPicker(entryID: entry.id, instance: instance) }
             )
@@ -253,9 +282,11 @@ struct MedsTodayList: View {
         return start > now
     }
 
-    private var isMovePicker: Bool {
-        if case .move = picker?.mode { return true }
-        return false
+    private func openMoveSheet(_ instance: DoseInstance) {
+        Haptics.tap()
+        picker = nil
+        store.scheduleChange = nil
+        moveTarget = instance
     }
 
     private func review(_ instance: DoseInstance) {
@@ -466,14 +497,18 @@ private struct TodayDoseRow: View {
     /// Its inline time wheel is open.
     var isEditingTime = false
     var hasWarning: Bool
+    /// Tied to other medications by a rule: the group's colour and "Linked to Thyroid".
+    var link: (color: Color, text: String)?
     var onTimeTap: (() -> Void)?
+    /// Upcoming and movable today: opens the Move sheet.
+    var onMove: (() -> Void)?
     var onWarning: () -> Void
     var onPickTime: () -> Void
     @Environment(AppStore.self) private var store
 
     var body: some View {
         let med = instance.medication
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             timeLabel
 
             RoundedRectangle(cornerRadius: 2)
@@ -505,7 +540,19 @@ private struct TodayDoseRow: View {
                     .font(.bloom(.footnote, weight: .semibold))
                     .foregroundStyle(statusColor)
                     .lineLimit(2)
+                if let link {
+                    Label {
+                        Text(link.text).foregroundStyle(Theme.textSecondary)
+                    } icon: {
+                        Image(systemName: "link").foregroundStyle(link.color)
+                    }
+                    .font(.bloom(.caption, weight: .semibold))
+                    .lineLimit(2)
+                    .accessibilityIdentifier("today-link-\(med.shortName)")
+                }
+                if canLog { controls }
             }
+            .padding(.top, 4)
             Spacer(minLength: 4)
 
             if canLog { check }
@@ -514,6 +561,16 @@ private struct TodayDoseRow: View {
         .padding(.leading, 14)
         .padding(.trailing, canLog ? 6 : 14)
         .background(isEditingTime ? Theme.blushSoft.opacity(0.5) : .clear)
+        .overlay(alignment: .leading) {
+            if let link {
+                Capsule()
+                    .fill(link.color)
+                    .frame(width: 3)
+                    .padding(.vertical, 8)
+                    .padding(.leading, 4)
+                    .accessibilityHidden(true)
+            }
+        }
         .contentShape(.rect)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("today-row-\(med.shortName)")
@@ -564,8 +621,48 @@ private struct TodayDoseRow: View {
         }
     }
 
-    /// Tap: taken now (or undo). Long-press: Now / Planned / Pick a time / Skip.
+    /// Tap: taken now (or undo). Nothing hides behind a long press.
     private var check: some View {
+        let med = instance.medication
+        return Button {
+            if instance.isPending { actions.taken(instance, nowTime) } else { actions.undo(instance) }
+        } label: {
+            Image(systemName: instance.isTaken ? "checkmark.circle.fill" : (instance.isSkipped ? "minus.circle.fill" : "circle"))
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(instance.isTaken ? Theme.sage : (instance.isSkipped ? Theme.textSecondary.opacity(0.6) : Theme.blush))
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 48, height: 48)
+                .contentShape(.rect)
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel(instance.isPending ? "Mark \(med.shortName) taken" : "Undo \(med.shortName)")
+        .accessibilityIdentifier("today-check-\(med.shortName)")
+    }
+
+    /// Under the name: "Move" for an upcoming dose, and "More" (a tap menu) for other times, Skip and Edit.
+    private var controls: some View {
+        HStack(spacing: 8) {
+            if let onMove {
+                Button(action: onMove) {
+                    Label("Move", systemImage: "arrow.up.arrow.down")
+                        .font(.bloom(.subheadline, weight: .bold))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .foregroundStyle(Theme.blushDeep)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 36)
+                        .background(Theme.blushSoft, in: .capsule)
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Move \(instance.medication.shortName)")
+                .accessibilityIdentifier("today-move-\(instance.medication.shortName)")
+            }
+            moreMenu
+        }
+        .padding(.top, 6)
+    }
+
+    private var moreMenu: some View {
         let med = instance.medication
         return Menu {
             if instance.isPending {
@@ -574,35 +671,29 @@ private struct TodayDoseRow: View {
                         Label("Taken at \(clock(before)) (before undo)", systemImage: "arrow.uturn.backward.circle")
                     }
                 }
-                Button { actions.taken(instance, nowTime) } label: { Label("Now", systemImage: "checkmark.circle") }
                 if instance.scheduledAt <= .now {
                     Button { actions.taken(instance, instance.scheduledAt) } label: {
-                        Label("Planned (\(clock(instance.scheduledAt)))", systemImage: "clock")
+                        Label("Taken at planned time (\(clock(instance.scheduledAt)))", systemImage: "clock")
                     }
                 }
-                Button(action: onPickTime) { Label("Pick a time…", systemImage: "clock.arrow.circlepath") }
+                Button(action: onPickTime) { Label("Taken earlier · pick a time…", systemImage: "clock.arrow.circlepath") }
                 Divider()
-                Button { actions.skip(instance) } label: { Label("Skip", systemImage: "forward.end") }
-            } else {
-                if instance.isTaken {
-                    Button(action: onPickTime) { Label("Change taken time…", systemImage: "clock.arrow.circlepath") }
-                }
-                Button { actions.undo(instance) } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                Button { actions.skip(instance) } label: { Label("Skip today", systemImage: "forward.end") }
+            } else if instance.isTaken {
+                Button(action: onPickTime) { Label("Change taken time…", systemImage: "clock.arrow.circlepath") }
             }
             Divider()
             Button { actions.edit(med) } label: { Label("Edit medication", systemImage: "pencil") }
         } label: {
-            Image(systemName: instance.isTaken ? "checkmark.circle.fill" : (instance.isSkipped ? "minus.circle.fill" : "circle"))
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(instance.isTaken ? Theme.sage : (instance.isSkipped ? Theme.textSecondary.opacity(0.6) : Theme.blush))
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: 44, height: 44)
-        } primaryAction: {
-            if instance.isPending { actions.taken(instance, nowTime) } else { actions.undo(instance) }
+            Label("More", systemImage: "ellipsis")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 44, height: 36)
+                .background(Theme.surfaceMuted, in: .capsule)
         }
-        .accessibilityLabel(instance.isPending ? "Mark \(med.shortName) taken" : "Undo \(med.shortName)")
-        .accessibilityHint("Touch and hold for more times")
-        .accessibilityIdentifier("today-check-\(med.shortName)")
+        .accessibilityLabel("More for \(med.shortName)")
+        .accessibilityIdentifier("today-more-\(med.shortName)")
     }
 
     /// "Now" on a past day means the planned time.

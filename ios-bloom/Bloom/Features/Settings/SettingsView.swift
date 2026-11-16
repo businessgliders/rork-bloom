@@ -54,7 +54,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Meds & routines")
                 } footer: {
-                    Text("Rewrite the whole plan as text, the way you did at setup. Day-to-day changes are easier on the Meds screen.")
+                    Text("Change your meds and rules in your own words, the way you did at setup. To move today's times, use Meds today.")
                 }
 
                 Section("Notifications") {
@@ -171,7 +171,7 @@ struct SettingsView: View {
                 exportURL = store.exportFile()
             }
             .navigationDestination(item: $startOverOwner) { who in
-                MedsRoutinesView(owner: who, startOver: true, onApplied: { startOverOwner = nil })
+                MedsRoutinesView(owner: who, editing: true, onApplied: { startOverOwner = nil })
             }
             .alert("Reminders access is off", isPresented: $remindersDenied) {
                 Button("Open Settings") {
@@ -240,7 +240,7 @@ struct SettingsView: View {
             startOverOwner = who
         } label: {
             HStack {
-                Label(title.map { "Start over from text · \($0)" } ?? "Start over from text", systemImage: "text.alignleft")
+                Label(title.map { "Edit my meds & rules · \($0)" } ?? "Edit my meds & rules", systemImage: "square.and.pencil")
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -248,7 +248,7 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textCaption)
             }
         }
-        .accessibilityIdentifier("settings-start-over-\(who.rawValue)")
+        .accessibilityIdentifier("settings-edit-meds-\(who.rawValue)")
     }
 
     @ViewBuilder

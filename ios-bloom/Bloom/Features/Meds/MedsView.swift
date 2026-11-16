@@ -71,6 +71,10 @@ struct MedsView: View {
                 } else {
                     content
                         .environment(\.medsPerson, personName)
+                        .onDisappear {
+                            // Leaving with a shift not saved yet: the tab bar asks Just today / Every day.
+                            if store.scheduleChange?.kind == .shift { store.shiftNeedsAnswer = true }
+                        }
                 }
             }
             .navigationTitle(title)
@@ -97,7 +101,7 @@ struct MedsView: View {
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
                 case .schedule(let who):
-                    MedsScheduleContainer(owner: who)
+                    MedsOverviewView(owner: who)
                 }
             }
         }
@@ -287,7 +291,7 @@ struct MedsView: View {
         }
         MedsTodayList(
             instances: instances,
-            meals: store.meals(for: owner, on: selectedDay),
+            meals: shownMeals,
             day: selectedDay,
             owner: owner,
             canLog: !isFuture,
@@ -327,6 +331,15 @@ struct MedsView: View {
         .accessibilityIdentifier("meds-plan-routine")
     }
 
+    /// Meals as a pending Shift my day would leave them.
+    private var shownMeals: [ScheduleMeal] {
+        if let change = store.scheduleChange, change.kind == .shift, change.owner == owner,
+           cal.isDate(change.date, inSameDayAs: selectedDay) {
+            return change.meals
+        }
+        return store.meals(for: owner, on: selectedDay)
+    }
+
     private var dayPicker: some View {
         DayPicker(selection: $selectedDay, today: today) { day in
             let instances = visibleInstances(on: day)
@@ -338,6 +351,9 @@ struct MedsView: View {
     private func overview(_ instances: [DoseInstance]) -> some View {
         if isToday {
             VStack(spacing: 12) {
+                if store.hasRoutine(owner) {
+                    ShiftDayCard(owner: owner, day: selectedDay)
+                }
                 RightNowCard(
                     instances: instances,
                     carryOver: visibleCarryOver,
