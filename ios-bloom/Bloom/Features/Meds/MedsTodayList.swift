@@ -131,17 +131,24 @@ struct MedsTodayList: View {
         let panel = panelAnchor(entries)
         DayCard {
             if entries.isEmpty {
-                Text("Nothing planned on this day.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.daySecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
+                HStack(spacing: 12) {
+                    CarryEmptyMark(size: 24)
+                    Text("Nothing planned on this day.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.daySecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
             }
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 if index > 0, !isNow(entry), !isNow(entries[index - 1]) {
                     DayDivider()
                 }
                 row(entry)
+                    .id(entry.id)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared || reduceMotion ? 0 : 6)
+                    .animation(.easeOut(duration: 0.35).delay(Double(index) * 0.03), value: appeared)
                     .transition(.opacity)
                 if let picker, picker.entryID == entry.id {
                     pickerRow(picker)
@@ -175,7 +182,18 @@ struct MedsTodayList: View {
         .animation(.easeOut(duration: 0.2), value: picker?.time)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
         .accessibilityIdentifier("meds-day-list")
+        .onAppear {
+            // Rows fade and rise once per launch, not on every tab switch.
+            guard !appeared else { return }
+            MedsTodayList.rowsHaveAppeared = true
+            appeared = true
+        }
     }
+
+    /// Set after the first list appearance in this launch.
+    static var rowsHaveAppeared = false
+    @State private var appeared = MedsTodayList.rowsHaveAppeared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func isNow(_ entry: Entry) -> Bool {
         if case .now = entry { return true }
@@ -241,7 +259,8 @@ struct MedsTodayList: View {
             timeColor: editing || shown != instance.anchor ? Theme.rose : nil,
             timeAction: timeAction,
             nameAction: { Haptics.tap(); onOpenMedication(med) },
-            identifier: med.shortName
+            identifier: med.shortName,
+            dotBounce: instance.isTaken
         ) {
             if canLog { check(instance, entryID: entryID) }
         }

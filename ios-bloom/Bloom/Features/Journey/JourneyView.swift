@@ -105,6 +105,60 @@ struct MilestoneEditorItem: Identifiable {
 
 // MARK: - Hero
 
+/// The Journey hero: the Carry arc as pregnancy progress (week / 40), the dot growing each
+/// trimester, the week number in the hole, and the lowercase "carry" wordmark over the arc.
+/// The arc draws in from 0 every time the tab opens. Designed at 330 pt.
+struct CarryWeekMark: View {
+    var week: Int
+    var progress: Double
+    var trimester: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown: Double = 0
+
+    private let size: CGFloat = 268
+    private var dotScale: CGFloat { [0.42, 0.56, 0.7][max(0, min(2, trimester - 1))] }
+
+    var body: some View {
+        ZStack {
+            CarryMark(size: size, progress: shown, dotScale: dotScale, dotOffset: 0.19,
+                      trackColor: Theme.ringTrack, breathing: true)
+            VStack(spacing: -2) {
+                Text("\(week)")
+                    .font(.system(size: 66, weight: .semibold, design: .serif))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.text)
+                    .contentTransition(.numericText(value: Double(week)))
+                Text(week == 1 ? "week" : "weeks")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .offset(x: -size * 0.09, y: 2)
+        }
+        .frame(width: size, height: size)
+        // The wordmark sits on the arc's upper left: the arc runs behind its "c".
+        .overlay(alignment: .topLeading) {
+            Text("carry")
+                .font(.system(size: 62, weight: .regular, design: .serif).italic())
+                .foregroundStyle(Theme.rose.opacity(0.85))
+                .fixedSize()
+                .offset(x: -size * 0.08, y: -size * 0.13)
+                .accessibilityHidden(true)
+        }
+        .frame(width: 330, height: 330, alignment: .center)
+        .offset(y: 14)
+        .onAppear { drawIn() }
+        .onChange(of: progress) { _, new in
+            withAnimation(reduceMotion ? nil : .spring(response: 0.6, dampingFraction: 0.9)) { shown = new }
+        }
+    }
+
+    private func drawIn() {
+        guard !reduceMotion else { shown = progress; return }
+        shown = 0
+        withAnimation(.easeOut(duration: 1.1).delay(0.12)) { shown = progress }
+    }
+}
+
 struct WeekHeroView: View {
     var profile: PregnancyProfile
     var age: GestationalAge
@@ -116,6 +170,10 @@ struct WeekHeroView: View {
 
 
     private var shownWeek: Int { browseWeek ?? age.contentWeek }
+    private var targetProgress: Double {
+        browseWeek == nil ? age.ringProgress : Double(shownWeek * 7) / 280
+    }
+    private var shownTrimester: Int { shownWeek < 14 ? 1 : (shownWeek < 28 ? 2 : 3) }
     private var content: WeekContent? { WeekLibrary.week(shownWeek) }
 
     var body: some View {
@@ -165,33 +223,21 @@ struct WeekHeroView: View {
             }
 
             Button(action: onOpenWeek) {
-                ZStack {
-                    ProgressRing(
-                        progress: browseWeek == nil ? age.ringProgress : Double(shownWeek * 7) / 280,
-                        lineWidth: expanded ? 30 : 20
-                    )
-                    VStack(spacing: 10) {
-                        ZStack(alignment: .topTrailing) {
-                            BlobShape(seed: shownWeek)
-                                .fill(Theme.peachSoft)
-                                .frame(width: 200, height: 170)
-                            Text(content?.emoji ?? "🌱")
-                                .font(.system(size: 92))
-                                .frame(width: 200, height: 170)
-                                // Only the offset loops; a repeatForever transaction would also
-                                // catch layout moves (e.g. folding the Duo) and sway forever.
-                                .phaseAnimator([false, true]) { emoji, up in
-                                    emoji.offset(y: up ? -5 : 4)
-                                } animation: { _ in .easeInOut(duration: 2.4) }
-                                .contentTransition(.interpolate)
-                            ShineMarks()
-                                .offset(x: -14, y: 8)
-                        }
-                        VStack(spacing: 4) {
+                VStack(spacing: expanded ? 18 : 12) {
+                    CarryWeekMark(week: shownWeek, progress: targetProgress, trimester: shownTrimester)
+                        // Drawn for 330 pt; grows with the bigger pane like the old ring did.
+                        .frame(width: 330, height: 330)
+                        .scaleEffect(expanded ? 440 / 330 : 1)
+                        .fittedSquare(expanded ? 440 : 330)
+                        .padding(.horizontal, 4)
+                    HStack(spacing: 10) {
+                        Text(content?.emoji ?? "🌱")
+                            .font(.system(size: 34))
+                            .contentTransition(.interpolate)
+                        VStack(alignment: .leading, spacing: 2) {
                             Text("\(profile.babyName) is \(content?.sizeSentence ?? "growing")")
                                 .font(.bloom(.headline, weight: .bold))
                                 .foregroundStyle(Theme.text)
-                                .multilineTextAlignment(.center)
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.8)
                             if let measurement = content?.measurementText {
@@ -200,15 +246,10 @@ struct WeekHeroView: View {
                                     .foregroundStyle(Theme.textSecondary)
                             }
                         }
-                        .padding(.horizontal, 40)
                     }
-                    // Contents are drawn for the 330 pt ring; grow them with the bigger ring so
-                    // they keep the same proportion once the square is fitted to the pane.
-                    .frame(maxWidth: expanded ? 330 : nil)
-                    .scaleEffect(expanded ? 520 / 330 : 1)
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: 420)
                 }
-                .fittedSquare(expanded ? 520 : 330)
-                .padding(.horizontal, 4)
             }
             .frame(maxHeight: expanded ? .infinity : nil)
             .buttonStyle(PressableStyle())

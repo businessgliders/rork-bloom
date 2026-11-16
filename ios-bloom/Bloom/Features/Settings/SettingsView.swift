@@ -95,7 +95,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Lock Screen & Reminders")
                 } footer: {
-                    Text("The Live Activity shows the dose that's due and your no-food countdown on the Lock Screen and Dynamic Island. Apple Reminders mirrors yesterday's, today's and tomorrow's doses into a \"Bloom Meds\" list, and ticking one off there logs it here. Turning Reminders off removes that list.")
+                    Text("The Live Activity shows the dose that's due and your no-food countdown on the Lock Screen and Dynamic Island. Apple Reminders mirrors yesterday's, today's and tomorrow's doses into a \"Carry Meds\" list, and ticking one off there logs it here. Turning Reminders off removes that list.")
                 }
 
                 Section("Appearance") {
@@ -131,7 +131,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Not medical advice")
                             .font(.bloom(.headline, weight: .bold))
-                        Text("Bloom shares general information only. Always follow your doctor, midwife or pharmacist. Your health data is never used for analytics or advertising.")
+                        Text("Carry shares general information only. Always follow your doctor, midwife or pharmacist. Your health data is never used for analytics or advertising.")
                             .font(.bloom(.subheadline))
                             .foregroundStyle(Theme.textSecondary)
                     }
@@ -179,10 +179,10 @@ struct SettingsView: View {
                 }
                 Button("Not now", role: .cancel) {}
             } message: {
-                Text("Allow Bloom full access to Reminders in Settings to mirror your doses.")
+                Text("Allow Carry full access to Reminders in Settings to mirror your doses.")
             }
             .confirmationDialog(
-                "Delete all Bloom data?",
+                "Delete all Carry data?",
                 isPresented: $confirmDelete,
                 titleVisibility: .visible
             ) {
@@ -222,7 +222,7 @@ struct SettingsView: View {
             } message: {
                 Text(store.account?.partnerJoined == true
                      ? "Your account, your meds and their history are deleted, along with everything on this phone. \(store.name(for: store.viewerRole.other)) keeps the shared pregnancy and milestones. This can't be undone."
-                     : "Your account and the shared pregnancy, with all milestones, photos, meds and history, are deleted from Bloom's cloud and this phone. This can't be undone.")
+                     : "Your account and the shared pregnancy, with all milestones, photos, meds and history, are deleted from Carry's cloud and this phone. This can't be undone.")
             }
             .alert("Something went wrong", isPresented: Binding(
                 get: { accountError != nil },
@@ -284,7 +284,7 @@ struct SettingsView: View {
                                 .foregroundStyle(Theme.blushDeep)
                                 .textSelection(.enabled)
                             Spacer()
-                            ShareLink(item: "Join our pregnancy on Bloom 🌷 Open Bloom, tap \"Join with a code\" and enter \(code)") {
+                            ShareLink(item: "Join our pregnancy on Carry 🌷 Open Carry, tap \"Join with a code\" and enter \(code)") {
                                 Label("Share", systemImage: "square.and.arrow.up")
                             }
                             .buttonStyle(BloomSoftButtonStyle())
@@ -319,7 +319,7 @@ struct SettingsView: View {
                 Button("Sign out") { confirmSignOut = true }
                 Button("Delete account", role: .destructive) { confirmDeleteAccount = true }
             } footer: {
-                if accountBusy { ProgressView().frame(maxWidth: .infinity) }
+                if accountBusy { CarrySpinner(size: 22).frame(maxWidth: .infinity) }
             }
             .disabled(accountBusy)
         } else {

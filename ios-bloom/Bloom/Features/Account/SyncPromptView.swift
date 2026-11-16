@@ -23,7 +23,7 @@ struct SyncPromptView: View {
                     .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("New: Bloom together")
+                        Text("New: Carry together")
                             .font(.bloom(.caption, weight: .bold))
                             .textCase(.uppercase)
                             .foregroundStyle(Theme.blushDeep)

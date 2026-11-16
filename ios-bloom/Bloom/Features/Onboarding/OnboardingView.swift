@@ -58,6 +58,10 @@ struct OnboardingView: View {
         .sheet(isPresented: $showAccount) {
             AccountFlowView()
         }
+        // Signed in from the welcome screen: next, start together or join with a code.
+        .onChange(of: sync.isSignedIn) { _, signedIn in
+            if signedIn, step == .welcome, !store.isOnboarded { showAccount = true }
+        }
         // Starting a shared pregnancy as a new user: skip the welcome, prefill the name.
         .onChange(of: sync.startRole) { _, role in
             guard let role else { return }
@@ -110,7 +114,7 @@ struct OnboardingView: View {
         case .welcome:
             WelcomeStep(
                 next: { go(to: .names) },
-                accountTitle: sync.isSignedIn ? "Start together or join with a code" : "Sign in or join with a code",
+                signedIn: sync.isSignedIn,
                 account: { showAccount = true }
             )
         case .names:
@@ -214,58 +218,91 @@ struct OnboardingStepLayout<Content: View>: View {
 
 // MARK: - Welcome
 
+/// First launch: the mark draws itself, "Carry" rises beside it, "your pregnancy, together"
+/// types in word by word, then the lockup slides up and the sign-in options fade in.
 private struct WelcomeStep: View {
     var next: () -> Void
-    var accountTitle: String
+    var signedIn: Bool
     var account: () -> Void
-    @State private var appeared = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var stage = 0
+    @State private var words = 0
+    @State private var settled = false
+
+    private static let line = ["your", "pregnancy,", "together"]
+
+    /// Hidden words stay in the layout (clear), so nothing reflows as they type in.
+    private var typedLine: AttributedString {
+        var out = AttributedString()
+        for (i, word) in Self.line.enumerated() {
+            var piece = AttributedString(i == 0 ? word : " " + word)
+            piece.foregroundColor = i < words ? Theme.daySecondary : .clear
+            out += piece
+        }
+        return out
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            CenteredScroll {
-                VStack(spacing: 28) {
-                    ZStack {
-                        BlobShape(seed: 11)
-                            .fill(Theme.blushSoft)
-                            .frame(width: 280, height: 260)
-                        FlowerIllustration(fill: appeared ? 1 : 0)
-                            .frame(width: 190, height: 220)
+            Spacer(minLength: 24)
+            VStack(spacing: 18) {
+                CarryLockupIntro(markSize: 64, wordSize: 44, stage: stage)
+                Text(typedLine)
+                    .font(.system(size: 19, weight: .regular, design: .serif).italic())
+                    .accessibilityLabel(Self.line.joined(separator: " "))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Carry. Your pregnancy, together.")
+            Spacer(minLength: 24)
+            if settled {
+                VStack(spacing: 4) {
+                    if signedIn {
+                        Button("Start together or join with a code") {
+                            Haptics.tap()
+                            account()
+                        }
+                        .buttonStyle(BloomPrimaryButtonStyle())
+                        Button("Use on this phone only", action: next)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.rose)
+                            .frame(minHeight: 44)
+                    } else {
+                        SignInOptions(secondary: ("Use without an account", next))
                     }
-                    .fittedSquare(280)
-                    .frame(maxWidth: 280)
-                    .scaleEffect(appeared ? 1 : 0.85)
-                    .accessibilityHidden(true)
-
-                    VStack(spacing: 12) {
-                        Text("Welcome to Bloom")
-                            .font(.bloom(.largeTitle, weight: .heavy))
-                            .foregroundStyle(Theme.text)
-                            .multilineTextAlignment(.center)
-                        Text("A cosy companion for the two of you: watch your little one grow and keep everyday care easy.")
-                            .font(.bloom(.title3))
-                            .foregroundStyle(Theme.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.horizontal, 28)
                 }
-                .padding(.vertical, 24)
-            }
-            Button("Let's begin", action: next)
-                .buttonStyle(BloomPrimaryButtonStyle())
                 .padding(.horizontal, 24)
-            Button(accountTitle) {
-                Haptics.tap()
-                account()
+                .padding(.bottom, 8)
+                .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 16)))
             }
-            .font(.bloom(.headline, weight: .bold))
-            .foregroundStyle(Theme.blushDeep)
-            .padding(.vertical, 14)
-            .padding(.bottom, 2)
         }
-        .onAppear {
-            withAnimation(.spring(response: 1.2, dampingFraction: 0.7).delay(0.2)) { appeared = true }
+        .frame(maxWidth: 460)
+        .frame(maxWidth: .infinity)
+        .task { await play() }
+    }
+
+    private func play() async {
+        guard stage == 0 else { return }
+        if reduceMotion {
+            withAnimation(.easeOut(duration: 0.35)) { stage = 3; words = Self.line.count }
+            try? await Task.sleep(for: .seconds(0.4))
+            withAnimation(.easeOut(duration: 0.35)) { settled = true }
+            return
         }
+        try? await Task.sleep(for: .seconds(0.25))
+        withAnimation(.easeOut(duration: 0.7)) { stage = 1 }
+        try? await Task.sleep(for: .seconds(0.55))
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.55)) { stage = 2 }
+        try? await Task.sleep(for: .seconds(0.2))
+        withAnimation(.easeOut(duration: 0.4)) { stage = 3 }
+        try? await Task.sleep(for: .seconds(0.45))
+        for i in 1...Self.line.count {
+            withAnimation(.easeOut(duration: 0.25)) { words = i }
+            try? await Task.sleep(for: .seconds(0.22))
+        }
+        try? await Task.sleep(for: .seconds(0.35))
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { settled = true }
     }
 }
 
@@ -535,7 +572,7 @@ private struct NoticeStep: View {
             VStack(alignment: .leading, spacing: 16) {
                 NoticeRow(symbol: "heart.text.square.fill", tint: Theme.blushDeep, fill: Theme.blushSoft,
                           title: "General information, not medical advice",
-                          text: "Bloom shares typical information to help you feel prepared. Every pregnancy is different, so always follow your doctor, midwife or pharmacist.")
+                          text: "Carry shares typical information to help you feel prepared. Every pregnancy is different, so always follow your doctor, midwife or pharmacist.")
                 NoticeRow(symbol: "lock.fill", tint: Theme.sageDeep, fill: Theme.sageSoft,
                           title: "Your data stays yours",
                           text: "Your health information is never used for analytics or advertising.")
@@ -599,7 +636,7 @@ private struct PermissionsStep: View {
             emoji: "🔔",
             title: "Little nudges, when you want them",
             subtitle: "Totally optional. You can change these any time in Settings.",
-            buttonTitle: "Let's bloom",
+            buttonTitle: "Let's go",
             action: finish
         ) {
             VStack(spacing: 14) {
@@ -618,7 +655,7 @@ private struct PermissionsStep: View {
                     tint: Theme.sageDeep,
                     fill: Theme.sageSoft,
                     title: "Apple Reminders",
-                    text: "Mirror doses into a \"Bloom Meds\" list so they show up everywhere you use Reminders.",
+                    text: "Mirror doses into a \"Carry Meds\" list so they show up everywhere you use Reminders.",
                     granted: remindersGranted
                 ) {
                     Task {

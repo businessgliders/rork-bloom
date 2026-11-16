@@ -1,5 +1,15 @@
 import Foundation
 
+/// One day in the streak chart: share of doses taken, and whether one was missed.
+struct StreakBar: Equatable, Identifiable {
+    enum Kind: Equatable { case past, today, future, nothingPlanned }
+    var day: Date
+    var share: Double
+    var missed: Bool
+    var kind: Kind
+    var id: Date { day }
+}
+
 /// One fact on How it's going. Factual, never scolding.
 struct ProgressObservation: Identifiable, Equatable {
     enum Kind: Equatable { case onTime, late(UUID), unlogged }
@@ -95,6 +105,25 @@ extension AppStore {
     func lastDays(_ owner: MedOwner, count: Int) -> [[DoseInstance]] {
         let today = PregnancyMath.calendar.startOfDay(for: now)
         return (0..<count).reversed().map { instances(owner, on: PregnancyMath.addDays(-$0, to: today)) }
+    }
+
+    /// Last week + this week (Sunday to Saturday, like the week strip): one bar per day.
+    func streakBars(_ owner: MedOwner) -> [StreakBar] {
+        let cal = PregnancyMath.calendar
+        let today = cal.startOfDay(for: now)
+        let sunday = PregnancyMath.addDays(-(cal.component(.weekday, from: today) - 1), to: today)
+        let start = PregnancyMath.addDays(-7, to: sunday)
+        return (0..<14).map { offset in
+            let day = PregnancyMath.addDays(offset, to: start)
+            if day > today { return StreakBar(day: day, share: 0, missed: false, kind: .future) }
+            let list = instances(owner, on: day)
+            guard !list.isEmpty else { return StreakBar(day: day, share: 0, missed: false, kind: .nothingPlanned) }
+            let taken = list.filter(\.isTaken).count
+            let late = now.addingTimeInterval(-3600)
+            let missed = list.contains { $0.isSkipped || ($0.isPending && (day < today || $0.scheduledAt < late)) }
+            return StreakBar(day: day, share: Double(taken) / Double(list.count), missed: missed,
+                             kind: day == today ? .today : .past)
+        }
     }
 
     /// Green dot = all logged, sand = some logged, nil = nothing logged or nothing planned.

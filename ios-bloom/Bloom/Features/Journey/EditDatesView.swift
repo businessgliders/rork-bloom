@@ -50,7 +50,7 @@ struct EditDatesView: View {
                     )
                     LabeledContent("Today", value: profile.progress(on: store.now).headline)
                 } footer: {
-                    Text("Got a due date from your provider? Set it here and Bloom will follow it.")
+                    Text("Got a due date from your provider? Set it here and Carry will follow it.")
                 }
             }
         }

@@ -86,7 +86,7 @@ struct JourneyWidgetView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Open Bloom")
+                Text("Open Carry")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(p.text)
                 Text("to start your journey")
@@ -98,17 +98,17 @@ struct JourneyWidgetView: View {
     }
 
     private func ring(age: GestationalAge, size: CGFloat) -> some View {
+        // The Carry arc as progress (week / 40); the dot grows each trimester.
         ZStack {
-            DayRing(progress: age.ringProgress, color: p.rose, track: p.roseTint, lineWidth: size * 0.08)
-            VStack(spacing: -2) {
-                Text("\(age.weeks)")
-                    .font(.system(size: size * 0.32, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundStyle(p.text)
-                Text("weeks")
-                    .font(.system(size: max(11, size * 0.12)))
-                    .foregroundStyle(p.secondary)
-            }
+            CarryMark(size: size, progress: min(1, age.ringProgress),
+                      dotScale: [0.42, 0.56, 0.7][max(0, min(2, age.trimester - 1))], dotOffset: 0.19,
+                      arcColor: p.rose, dotColor: p.terra, trackColor: p.roseTint)
+            Text("\(age.weeks)")
+                .font(.system(size: size * 0.27, weight: .semibold, design: .serif))
+                .monospacedDigit()
+                .foregroundStyle(p.text)
+                .minimumScaleFactor(0.7)
+                .offset(x: -size * 0.09)
         }
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)

@@ -36,7 +36,10 @@ struct DayRow<Trailing: View>: View {
     var identifier: String = ""
     /// A small line under the time ("was 3:00").
     var timeNote: String? = nil
+    /// Flip to bounce the dot once (a dose taken or undone).
+    var dotBounce = false
     @ViewBuilder var trailing: Trailing
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
@@ -44,6 +47,14 @@ struct DayRow<Trailing: View>: View {
             Circle()
                 .fill(dot)
                 .frame(width: 9, height: 9)
+                .keyframeAnimator(initialValue: CGFloat(1), trigger: reduceMotion ? false : dotBounce) { view, scale in
+                    view.scaleEffect(scale)
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        CubicKeyframe(1.7, duration: 0.12)
+                        SpringKeyframe(1, duration: 0.45, spring: .bouncy)
+                    }
+                }
                 .padding(.trailing, 12)
                 .accessibilityHidden(true)
             nameView
@@ -144,29 +155,44 @@ extension DayRow where Trailing == EmptyView {
 }
 
 /// Empty rose ring, or a filled green check once taken; skipped shows a muted dash.
+/// Taking: the circle fills from the centre and the check draws (0.25 s); undo plays it back.
 struct CheckCircle: View {
     enum State { case open, taken, skipped }
     var state: State
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let taken = state == .taken
         ZStack {
-            switch state {
-            case .open:
-                Circle().strokeBorder(Theme.rose.opacity(0.75), lineWidth: 1.5)
-            case .taken:
-                Circle().fill(Theme.greenCheck)
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-            case .skipped:
-                Circle().strokeBorder(Theme.dayMuted.opacity(0.6), lineWidth: 1.5)
-                Capsule().fill(Theme.dayMuted).frame(width: 10, height: 2)
-            }
+            Circle()
+                .strokeBorder(state == .skipped ? Theme.dayMuted.opacity(0.6) : Theme.rose.opacity(0.75), lineWidth: 1.5)
+                .opacity(taken ? 0 : 1)
+            Circle()
+                .fill(Theme.greenCheck)
+                .scaleEffect(taken || reduceMotion ? 1 : 0.15)
+                .opacity(taken ? 1 : 0)
+            CheckGlyph()
+                .trim(from: 0, to: taken ? 1 : 0)
+                .stroke(.white, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                .frame(width: 11, height: 8.5)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.17).delay(taken ? 0.08 : 0), value: state)
+            Capsule().fill(Theme.dayMuted).frame(width: 10, height: 2)
+                .opacity(state == .skipped ? 1 : 0)
         }
         .frame(width: 26, height: 26)
         .frame(width: 44, height: 44)
         .contentShape(.rect)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: state)
+        .animation(reduceMotion ? .easeInOut(duration: 0.15) : .easeOut(duration: 0.2), value: state)
+    }
+}
+
+private struct CheckGlyph: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.midY + r.height * 0.05))
+        p.addLine(to: CGPoint(x: r.minX + r.width * 0.36, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        return p
     }
 }
 
@@ -206,52 +232,155 @@ struct DayDivider: View {
     }
 }
 
-/// One line under the title: "2-day streak · 9 of 10 this week · 1 missed ›".
-/// Streak in green, missed in terracotta (left out at 0). Opens How it's going.
-struct StreakSummary: View {
+/// The row above the week strip: "2-day streak" left, a monotone 14-day bar chart right.
+/// Bar height = share taken, a day with a miss at 35%, future days as 2 pt stubs, today outlined.
+/// Opens How it's going, which shows the same chart larger.
+struct StreakChart: View {
     var days: Int
-    var taken: Int
-    var due: Int
-    var missed: Int
+    var bars: [StreakBar]
+    /// Hold the burst while the celebration screen covers the list.
+    var paused = false
     var action: () -> Void
 
-    private var line: Text {
-        // A green "0-day streak" reads like praise for nothing, so day zero is plain.
-        let streak = days == 0
-            ? Text("No streak yet").foregroundStyle(Theme.daySecondary)
-            : Text(days == 1 ? "1-day streak" : "\(days)-day streak")
-                .foregroundStyle(Theme.greenText)
-                .fontWeight(.semibold)
-        let dot = Text(" · ").foregroundStyle(Theme.dayMuted)
-        var out = streak
-        if due > 0 {
-            out = Text("\(out)\(dot)\(Text("\(taken) of \(due) this week").foregroundStyle(Theme.daySecondary))")
-        }
-        if missed > 0 {
-            out = Text("\(out)\(dot)\(Text("\(missed) missed").foregroundStyle(Theme.terraText).fontWeight(.semibold))")
-        }
-        return out
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var burst = 0
+    @State private var pendingBurst = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                line
+            HStack(spacing: 10) {
+                Text(days == 0 ? "No streak yet" : (days == 1 ? "1-day streak" : "\(days)-day streak"))
+                    .font(.system(size: 13, weight: days == 0 ? .regular : .semibold))
+                    .foregroundStyle(days == 0 ? Theme.daySecondary : Theme.dayText)
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(days)))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 8)
+                StreakBars(bars: bars, barWidth: 4, gap: 3, height: 20, burst: burst)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.dayMuted)
             }
-            .font(.system(size: 13))
+            .frame(height: 28)
             .frame(minHeight: 44)
             .contentShape(.rect)
         }
         .buttonStyle(PressableStyle())
-        .accessibilityElement(children: .combine)
+        .animation(.snappy, value: days)
+        .onChange(of: days) { old, new in
+            guard new > old, !reduceMotion else { return }
+            if paused { pendingBurst = true } else { fire() }
+        }
+        .onChange(of: paused) { _, isPaused in
+            if !isPaused, pendingBurst { pendingBurst = false; fire() }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(days == 0 ? "No streak yet" : "\(days)-day streak")
+        .accessibilityValue(StreakBars.summary(bars))
         .accessibilityHint("Opens How it's going")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { action() }
         .accessibilityIdentifier("meds-streak")
+    }
+
+    private func fire() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            burst += 1
+        }
+    }
+}
+
+/// The bars themselves, shared by Meds today (small) and How it's going (large).
+struct StreakBars: View {
+    var bars: [StreakBar]
+    var barWidth: CGFloat
+    var gap: CGFloat
+    var height: CGFloat
+    var color: Color = Theme.daySecondary
+    var burst = 0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var grown = false
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: gap) {
+            ForEach(Array(bars.enumerated()), id: \.element.id) { index, bar in
+                column(bar)
+                    .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.8)
+                        .delay(Double(index) * 0.015), value: grown)
+            }
+        }
+        .frame(height: height, alignment: .bottom)
+        .overlay(alignment: .bottomLeading) {
+            if let i = bars.firstIndex(where: { $0.kind == .today }) {
+                DotBurst(trigger: burst, radius: max(12, height * 0.8))
+                    .offset(x: CGFloat(i) * (barWidth + gap) + barWidth / 2, y: -height / 2)
+            }
+        }
+        .onAppear { grown = true }
+        .onDisappear { grown = false }
+    }
+
+    @ViewBuilder
+    private func column(_ bar: StreakBar) -> some View {
+        let radius = barWidth / 2
+        switch bar.kind {
+        case .future, .nothingPlanned:
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color.opacity(bar.kind == .future ? 0.35 : 0.5))
+                .frame(width: barWidth, height: 2)
+        case .past, .today:
+            let h = max(2, height * bar.share)
+            ZStack(alignment: .bottom) {
+                if bar.kind == .today {
+                    RoundedRectangle(cornerRadius: radius)
+                        .strokeBorder(color.opacity(0.7), lineWidth: 1)
+                        .frame(width: barWidth + 2, height: height)
+                }
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(color.opacity(bar.missed ? 0.35 : 1))
+                    .frame(width: barWidth, height: grown ? h : 0)
+            }
+            .frame(width: barWidth, height: height, alignment: .bottom)
+        }
+    }
+
+    static func summary(_ bars: [StreakBar]) -> String {
+        let past = bars.filter { $0.kind == .past || $0.kind == .today }
+        let full = past.filter { $0.share >= 1 }.count
+        let missed = past.filter(\.missed).count
+        return "\(full) of the last \(past.count) days fully taken, \(missed) with a miss"
+    }
+}
+
+/// A ring of six small dots that bursts outward once per trigger.
+private struct DotBurst: View {
+    var trigger: Int
+    var radius: CGFloat
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<6, id: \.self) { i in
+                Circle().fill(Theme.greenDot).frame(width: 4, height: 4)
+                    .keyframeAnimator(initialValue: CGFloat(0), trigger: trigger) { dot, t in
+                        let angle = Double(i) / 6 * 2 * .pi - .pi / 2
+                        dot
+                            .offset(x: cos(angle) * radius * t, y: sin(angle) * radius * t)
+                            .opacity(t == 0 ? 0 : Double(1 - t * t))
+                            .scaleEffect(1.2 - t * 0.6)
+                    } keyframes: { _ in
+                        KeyframeTrack {
+                            LinearKeyframe(0.01, duration: 0.01)
+                            CubicKeyframe(1, duration: 0.55)
+                            LinearKeyframe(0, duration: 0.01)
+                        }
+                    }
+            }
+        }
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -261,6 +390,8 @@ struct WeekStrip: View {
     var today: Date
     /// true = all logged, false = partly, nil = none.
     var mark: (Date) -> Bool?
+    @Namespace private var selectionSpace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var days: [Date] {
         let cal = PregnancyMath.calendar
@@ -297,10 +428,15 @@ struct WeekStrip: View {
                     .foregroundStyle(isToday ? .white : Theme.dayText)
                     .frame(width: 36, height: 36)
                     .background {
-                        if isToday {
-                            Circle().fill(Theme.rose)
-                        } else if isSelected {
-                            Circle().strokeBorder(Theme.rose, lineWidth: 1.5)
+                        ZStack {
+                            if isToday { Circle().fill(Theme.rose) }
+                            // One ring that slides between days (it sits unseen on today's fill).
+                            if isSelected {
+                                Circle().strokeBorder(Theme.rose, lineWidth: 1.5)
+                                    .matchedGeometryEffect(id: "week-selection", in: selectionSpace,
+                                                           isSource: true)
+                                    .transition(reduceMotion ? .opacity : .identity)
+                            }
                         }
                     }
                 Circle()
@@ -322,20 +458,27 @@ struct FoodStatusCard: View {
     var noFood: Bool
     var trailing: String
     var next: String
+    /// "42 min", counting down while no food is allowed.
+    var countdown: String? = nil
+    var remainingMinutes: Int = 0
+    /// 0–1 through the no-food window, drawn as a thin line along the bottom edge.
+    var progress: Double? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 HStack(spacing: 8) {
                     Circle().fill(noFood ? Theme.terraDot : Theme.greenDot).frame(width: 9, height: 9)
-                    Text(noFood ? "No food" : "Food OK")
+                    Text(noFood ? (countdown == nil ? "No food" : "No food \(trailing)") : "Food OK")
                         .font(.system(size: 17, weight: .semibold))
                 }
                 Spacer(minLength: 8)
-                Text(trailing)
-                    .font(.system(size: 15))
+                Text(countdown ?? trailing)
+                    .font(.system(size: 15, weight: countdown == nil ? .regular : .semibold))
                     .monospacedDigit()
                     .multilineTextAlignment(.trailing)
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(.snappy, value: remainingMinutes)
             }
             .foregroundStyle(noFood ? Theme.terraText : Theme.greenText)
             Text(next)
@@ -345,7 +488,19 @@ struct FoodStatusCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(noFood ? Theme.terraTint : Theme.greenTint, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
+        .background(noFood ? Theme.terraTint : Theme.greenTint)
+        .overlay(alignment: .bottomLeading) {
+            if let progress {
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Theme.terraDot.opacity(0.8))
+                        .frame(width: geo.size.width * min(1, max(0, progress)), height: 2.5)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+                .animation(.easeInOut(duration: 0.6), value: progress)
+            }
+        }
+        .clipShape(.rect(cornerRadius: Theme.dayRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("meds-status")
     }

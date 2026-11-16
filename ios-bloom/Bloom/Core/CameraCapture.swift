@@ -31,7 +31,7 @@ struct CameraCaptureView: View {
 
             switch camera.state {
             case .starting:
-                ProgressView().tint(.white)
+                CarrySpinner(size: 30, color: .white)
             case .running:
                 CameraPreview(session: camera.session)
                     .ignoresSafeArea()

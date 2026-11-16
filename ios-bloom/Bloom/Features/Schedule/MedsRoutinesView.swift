@@ -142,7 +142,7 @@ struct MedsRoutinesView: View {
         VStack(alignment: .leading, spacing: 8) {
             if !parser.reading.isEmpty {
                 HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini).tint(Theme.rose)
+                    CarrySpinner(size: 14, color: Theme.rose)
                     Text("Reading…")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.rose)
@@ -302,10 +302,10 @@ struct MedsRoutinesView: View {
     private var consentCard: some View {
         if store.aiLookupConsent != true, !allRead, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Before Bloom reads your lines", systemImage: "hand.raised.fill")
+                Label("Before Carry reads your lines", systemImage: "hand.raised.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.dayText)
-                Text("Bloom sends each line you write (with the lines just above it, so it knows which medication a line is about), and nothing else, to Rork's AI service, which passes it through Vercel AI Gateway to DeepSeek (Anthropic Claude if that's slow). It only sorts the line into medications and rules; the times are worked out on this iPhone. No photos, names or dates. Nothing changes until you tap Update plan.")
+                Text("Carry sends each line you write (with the lines just above it, so it knows which medication a line is about), and nothing else, to Rork's AI service, which passes it through Vercel AI Gateway to DeepSeek (Anthropic Claude if that's slow). It only sorts the line into medications and rules; the times are worked out on this iPhone. No photos, names or dates. Nothing changes until you tap Update plan.")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.daySecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -642,7 +642,7 @@ struct RoutineDaysSheet: View {
                 }
                 DayChips(days: t.days) { day in tap(day, in: t) }
                 Text(pendingMove.map { "\(PregnancyMath.calendar.weekdaySymbols[$0.day]) follows \($0.from.displayName). Tap it again to move it here." }
-                     ?? "A day follows one routine. Bloom keeps gap rules across midnight between them.")
+                     ?? "A day follows one routine. Carry keeps gap rules across midnight between them.")
                     .font(.bloom(.footnote))
                     .foregroundStyle(pendingMove == nil ? Theme.textSecondary : Theme.peachDeep)
                     .fixedSize(horizontal: false, vertical: true)

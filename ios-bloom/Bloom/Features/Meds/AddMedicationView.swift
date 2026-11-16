@@ -161,7 +161,7 @@ struct AddMedicationView: View {
         } header: {
             Text("Time & rules")
         } footer: {
-            Text("Bloom places this around your routine. To change its rules, use Edit medications & rules; to move it, open the routine.")
+            Text("Carry places this around your routine. To change its rules, use Edit medications & rules; to move it, open the routine.")
         }
     }
 
@@ -234,7 +234,7 @@ struct AddMedicationView: View {
                     Label("Suggest timing", systemImage: "sparkles")
                         .font(.bloom(.headline, weight: .bold))
                     Spacer()
-                    if lookupState == .loading { ProgressView() }
+                    if lookupState == .loading { CarrySpinner(size: 20) }
                 }
             }
             .disabled(trimmedName.count < 2 || lookupState == .loading)
@@ -279,7 +279,7 @@ struct AddMedicationView: View {
                 Label("Before we look it up", systemImage: "hand.raised.fill")
                     .font(.bloom(.headline, weight: .heavy))
                     .foregroundStyle(Theme.text)
-                Text("To suggest timing, Bloom sends only the medication name you typed (\"\(trimmedName)\") to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini. Nothing else (no names, dates or doses) is sent, and nothing is saved unless you confirm it.")
+                Text("To suggest timing, Carry sends only the medication name you typed (\"\(trimmedName)\") to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini. Nothing else (no names, dates or doses) is sent, and nothing is saved unless you confirm it.")
                     .font(.bloom(.subheadline))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -376,7 +376,7 @@ struct AddMedicationView: View {
         } header: {
             Text("Dose")
         } footer: {
-            Text("Copy this from your prescription label. Bloom never suggests doses.")
+            Text("Copy this from your prescription label. Carry never suggests doses.")
         }
     }
 
@@ -497,7 +497,7 @@ struct AddMedicationView: View {
             }
             .tint(Theme.sage)
         } footer: {
-            Text("Bloom helps you remember. It doesn't give medical advice.")
+            Text("Carry helps you remember. It doesn't give medical advice.")
         }
     }
 

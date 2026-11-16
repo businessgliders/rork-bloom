@@ -44,7 +44,7 @@ private struct ActivityModel {
         if windowRunning { return "No food yet" }
         if windowJustEnded { return "You can eat again" }
         if let dose = state.dose { return "Next: \(dose.name)" }
-        return "Bloom"
+        return "Carry"
     }
 
     /// The headline for someone else's running window reads into the big countdown
@@ -125,6 +125,7 @@ struct MedsLiveActivity: Widget {
             // The background tint and action colour are set inside the view, where
             // the rendering mode and colour scheme can be read.
             LockScreenActivityView(model: ActivityModel(context: context))
+                .widgetURL(CarryLink.meds)
         } dynamicIsland: { context in
             let model = ActivityModel(context: context)
             return DynamicIsland {
@@ -138,7 +139,7 @@ struct MedsLiveActivity: Widget {
                         .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    IslandCenter(model: model)
+                    Link(destination: CarryLink.meds) { IslandCenter(model: model) }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     ActivityBottom(model: model, onIsland: true)
@@ -151,6 +152,7 @@ struct MedsLiveActivity: Widget {
             } minimal: {
                 IslandMinimal(model: model)
             }
+            .widgetURL(CarryLink.meds)
             .keylineTint(model.accent.fixed(.dark))
         }
     }
@@ -172,7 +174,7 @@ private struct LockScreenActivityView: View {
                     HStack(spacing: 6) {
                         Circle().fill(palette.dot(model.accent)).frame(width: 9, height: 9)
                             .widgetAccentable()
-                        Text("Bloom · \(model.state.resolved) of \(model.state.total) today")
+                        Text("Carry · \(model.state.resolved) of \(model.state.total) today")
                             .font(.system(size: 13))
                             .monospacedDigit()
                             .foregroundStyle(palette.caption)

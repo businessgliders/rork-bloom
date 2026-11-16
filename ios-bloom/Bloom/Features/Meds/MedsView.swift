@@ -125,9 +125,46 @@ struct MedsView: View {
                 Text(line)
             }
         }
+        .onChange(of: DeepLinkRouter.shared.medsRequest) { _, _ in openFromLink() }
+        .onAppear { if DeepLinkRouter.shared.pendingMeds { openFromLink() } }
         .onChange(of: today) { oldValue, newValue in
             // Follow the calendar across midnight when the user was looking at "today".
             if cal.isDate(selectedDay, inSameDayAs: oldValue) { selectedDay = newValue }
+        }
+    }
+
+    // MARK: Deep link (carry://meds)
+
+    /// Bumped to scroll the day list to the current or next dose.
+    @State private var scrollRequest = 0
+
+    /// Meds today at the top level, on today, scrolled to the dose that matters now.
+    private func openFromLink() {
+        DeepLinkRouter.shared.pendingMeds = false
+        sheetMed = nil
+        showProgress = false
+        showQuiz = false
+        path = NavigationPath()
+        selectedDay = today
+        scrollRequest += 1
+    }
+
+    /// The row id ("dose-…") of the dose due now, else the next one.
+    private var focusRowID: String? {
+        let list = instances(on: today)
+        let carry = MedsEngine.carryOver(into: today, medications: meds, logs: store.doseLogs)
+        let state = MedsEngine.rightNow(instances: list, now: store.now, carryOver: carry)
+        let target = state.due.first(where: { list.contains($0) }) ?? state.next
+            ?? list.first(where: \.isPending)
+        return target.map { "dose-\($0.id)" }
+    }
+
+    private func scrollToFocus(_ proxy: ScrollViewProxy) {
+        guard let id = focusRowID else { return }
+        Task { @MainActor in
+            // Let the tab switch and the list settle first.
+            try? await Task.sleep(for: .milliseconds(450))
+            withAnimation(.smooth(duration: 0.5)) { proxy.scrollTo(id, anchor: .center) }
         }
     }
 
@@ -143,6 +180,7 @@ struct MedsView: View {
                 status(list)
                 if isToday { nextCard }
             }
+            .carryPullToRefresh { await refresh() }
             .background(Theme.dayCanvas)
         } secondary: {
             ScrollViewReader { proxy in
@@ -156,6 +194,8 @@ struct MedsView: View {
                     dayList(list)
                 }
                 .modifier(RevealRowPanel(proxy: proxy))
+                .onChange(of: scrollRequest) { _, _ in scrollToFocus(proxy) }
+                .onAppear { if scrollRequest > 0 { scrollToFocus(proxy) } }
             }
             .background(Theme.dayCanvas)
         } compact: {
@@ -167,6 +207,9 @@ struct MedsView: View {
                     dayList(list)
                 }
                 .modifier(RevealRowPanel(proxy: proxy))
+                .carryPullToRefresh { await refresh() }
+                .onChange(of: scrollRequest) { _, _ in scrollToFocus(proxy) }
+                .onAppear { if scrollRequest > 0 { scrollToFocus(proxy) } }
             }
             .background(Theme.dayCanvas.ignoresSafeArea())
         }
@@ -191,8 +234,8 @@ struct MedsView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.dayMuted)
             }
-            let week = store.weekSummary(owner)
-            StreakSummary(days: store.streak(owner).current, taken: week.taken, due: week.due, missed: week.missed) {
+            StreakChart(days: store.streak(owner).current, bars: store.streakBars(owner),
+                        paused: store.celebration != nil) {
                 Haptics.tap()
                 showProgress = true
             }
@@ -224,7 +267,10 @@ struct MedsView: View {
 
     // MARK: Status
 
-    private struct StatusText { var noFood: Bool; var trailing: String; var next: String }
+    private struct StatusText {
+        var noFood: Bool; var trailing: String; var next: String
+        var countdown: String? = nil; var minutesLeft = 0; var progress: Double? = nil
+    }
 
     private func statusText(_ list: [DoseInstance]) -> StatusText {
         let carry = MedsEngine.carryOver(into: today, medications: meds, logs: store.doseLogs)
@@ -241,7 +287,12 @@ struct MedsView: View {
         }
         switch state.food {
         case .noFood(let w):
-            return StatusText(noFood: true, trailing: "until \(DayList.clock(w.end))", next: next)
+            let left = max(0, Int((w.end.timeIntervalSince(store.now) / 60).rounded(.up)))
+            let length = w.end.timeIntervalSince(w.start)
+            return StatusText(noFood: true, trailing: "until \(DayList.clock(w.end))", next: next,
+                              countdown: left >= 60 ? "\(left / 60) h \(left % 60) min" : "\(left) min",
+                              minutesLeft: left,
+                              progress: length > 0 ? store.now.timeIntervalSince(w.start) / length : nil)
         case .holdForDose(let i, _, _):
             next = "Take \(i.medication.shortName) first, then eat"
             return StatusText(noFood: true, trailing: "for now", next: next)
@@ -255,7 +306,8 @@ struct MedsView: View {
         if isToday {
             let s = statusText(list)
             VStack(spacing: 12) {
-                FoodStatusCard(noFood: s.noFood, trailing: s.trailing, next: s.next)
+                FoodStatusCard(noFood: s.noFood, trailing: s.trailing, next: s.next,
+                               countdown: s.countdown, remainingMinutes: s.minutesLeft, progress: s.progress)
                 if let change = store.scheduleChange, change.placement == .top, change.owner == owner,
                    cal.isDate(change.date, inSameDayAs: selectedDay) {
                     ScheduleChangePanel(change: change)
@@ -331,6 +383,7 @@ struct MedsView: View {
                 Text("\(state.resolvedToday) of \(state.totalToday)")
                     .font(.system(size: 13))
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(state.resolvedToday)))
                     .foregroundStyle(Theme.daySecondary)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -381,7 +434,7 @@ struct MedsView: View {
                     Text("Plan around your day")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.dayText)
-                    Text("Tell Bloom when you wake, eat and sleep.")
+                    Text("Tell Carry when you wake, eat and sleep.")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.daySecondary)
                         .multilineTextAlignment(.leading)
@@ -438,13 +491,15 @@ struct MedsView: View {
             Theme.dayCanvas.ignoresSafeArea()
             CenteredScroll {
                 VStack(spacing: 16) {
+                    CarryEmptyMark(size: 56)
+                        .padding(.bottom, 4)
                     Text(store.hasRoutine(owner) ? "Write your medications" : "Set up your routine")
                         .font(.system(size: 30, weight: .bold))
                         .foregroundStyle(Theme.dayText)
                         .multilineTextAlignment(.center)
                     Text(store.hasRoutine(owner)
-                         ? "Write them in one go with any rules about timing, food or each other. Bloom works out the times."
-                         : "A few questions about when you wake, eat and sleep. Then write your medications and Bloom places every dose around your day.")
+                         ? "Write them in one go with any rules about timing, food or each other. Carry works out the times."
+                         : "A few questions about when you wake, eat and sleep. Then write your medications and Carry places every dose around your day.")
                         .font(.system(size: 17))
                         .foregroundStyle(Theme.daySecondary)
                         .multilineTextAlignment(.center)
@@ -465,6 +520,14 @@ struct MedsView: View {
     }
 
     /// No routine yet: the quiz first (it hands over to Meds & routines). Otherwise straight there.
+    /// Pull to refresh: fetch the partner's latest logs and recompute the day.
+    private func refresh() async {
+        store.reloadIfChangedExternally()
+        store.now = .now
+        SyncEngine.shared.refresh()
+        try? await Task.sleep(for: .seconds(1))
+    }
+
     private func startAdd() {
         Haptics.tap()
         if store.hasRoutine(owner) { path.append(MedsRoute.schedule(owner)) } else { showQuiz = true }

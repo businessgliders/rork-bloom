@@ -89,7 +89,7 @@ struct MedicationSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
                 if ruleLines.isEmpty {
-                    Text("No rules yet. Bloom places it around your day.")
+                    Text("No rules yet. Carry places it around your day.")
                         .font(.system(size: 15))
                         .foregroundStyle(Theme.daySecondary)
                 }
@@ -150,7 +150,7 @@ struct MedicationSheet: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            if moving { ProgressView().controlSize(.small) }
+                            if moving { CarrySpinner(size: 16) }
                             Text(store.pickerLabel(for: current.owner))
                             Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold))
                         }

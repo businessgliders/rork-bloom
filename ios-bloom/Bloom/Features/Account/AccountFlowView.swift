@@ -14,7 +14,7 @@ struct AccountFlowView: View {
                 BloomBackground()
                 Group {
                     if !sync.isSignedIn {
-                        AuthView()
+                        SignInView()
                             .transition(.opacity)
                     } else if sync.isBootstrapping {
                         loader
@@ -45,7 +45,7 @@ struct AccountFlowView: View {
 
     private var loader: some View {
         VStack(spacing: 14) {
-            ProgressView().controlSize(.large).tint(Theme.blushDeep)
+            CarrySpinner(size: 40)
             Text("Getting things ready…")
                 .font(.bloom(.headline, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
@@ -54,188 +54,7 @@ struct AccountFlowView: View {
     }
 }
 
-// MARK: - Sign in
-
-private struct AuthView: View {
-    @Environment(SyncEngine.self) private var sync
-    @Environment(\.colorScheme) private var colorScheme
-
-    enum Mode: String, CaseIterable, Identifiable {
-        case signIn = "Sign in", create = "Create account"
-        var id: String { rawValue }
-    }
-
-    @State private var mode: Mode = .signIn
-    @State private var name = ""
-    @State private var email = ""
-    @State private var password = ""
-    @State private var nonce = ""
-    @State private var busy = false
-    @State private var error: String?
-    @FocusState private var focus: Field?
-
-    enum Field { case name, email, password }
-
-    private var canSubmit: Bool {
-        email.contains("@") && password.count >= 6 && (mode == .signIn || !name.trimmingCharacters(in: .whitespaces).isEmpty)
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                ZStack {
-                    BlobShape(seed: 7).fill(Theme.blushSoft).frame(width: 96, height: 90)
-                    Text("💞").font(.system(size: 46))
-                }
-                .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Bloom together")
-                        .font(.bloom(.largeTitle, weight: .heavy))
-                        .foregroundStyle(Theme.text)
-                    Text("Sign in to share milestones and meds with your partner. Everything syncs between your phones.")
-                        .font(.bloom(.title3))
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                SignInWithAppleButton(.continue) { request in
-                    nonce = Self.randomNonce()
-                    request.requestedScopes = [.fullName, .email]
-                    request.nonce = Self.sha256(nonce)
-                } onCompletion: { result in
-                    handleApple(result)
-                }
-                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                .frame(height: 54)
-                .clipShape(.capsule)
-                .disabled(busy)
-
-                HStack {
-                    Rectangle().fill(Theme.ringTrack).frame(height: 1)
-                    Text("or with email")
-                        .font(.bloom(.caption, weight: .semibold))
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize()
-                    Rectangle().fill(Theme.ringTrack).frame(height: 1)
-                }
-
-                Picker("Mode", selection: $mode) {
-                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-
-                VStack(spacing: 12) {
-                    if mode == .create {
-                        AuthField(symbol: "person.fill", placeholder: "Your first name", text: $name)
-                            .textContentType(.givenName)
-                            .textInputAutocapitalization(.words)
-                            .focused($focus, equals: .name)
-                            .submitLabel(.next)
-                            .onSubmit { focus = .email }
-                    }
-                    AuthField(symbol: "envelope.fill", placeholder: "Email", text: $email)
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .focused($focus, equals: .email)
-                        .submitLabel(.next)
-                        .onSubmit { focus = .password }
-                    AuthField(symbol: "lock.fill", placeholder: mode == .create ? "Password (6+ characters)" : "Password",
-                              text: $password, secure: true)
-                        .textContentType(mode == .create ? .newPassword : .password)
-                        .focused($focus, equals: .password)
-                        .submitLabel(.go)
-                        .onSubmit { if canSubmit { submit() } }
-                }
-
-                if let error {
-                    Label(error, systemImage: "exclamationmark.circle.fill")
-                        .font(.bloom(.subheadline, weight: .semibold))
-                        .foregroundStyle(Theme.coralDeep)
-                        .transition(.opacity)
-                }
-
-                Button {
-                    submit()
-                } label: {
-                    if busy { ProgressView().tint(.white) } else { Text(mode == .signIn ? "Sign in" : "Create account") }
-                }
-                .buttonStyle(BloomPrimaryButtonStyle())
-                .disabled(!canSubmit || busy)
-
-                Text("Your data is stored in Bloom's secure cloud so you and your partner see the same thing. You can delete your account any time in Settings.")
-                    .font(.bloom(.footnote))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(24)
-            .animation(.smooth, value: mode)
-            .animation(.smooth, value: error)
-        }
-        .scrollDismissesKeyboard(.interactively)
-    }
-
-    private func submit() {
-        focus = nil
-        busy = true
-        error = nil
-        Task {
-            do {
-                let mail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if mode == .signIn {
-                    try await sync.signIn(email: mail, password: password)
-                } else {
-                    try await sync.signUp(name: name, email: mail, password: password)
-                }
-                Haptics.success()
-            } catch {
-                self.error = Backend.message(for: error)
-                Haptics.warning()
-            }
-            busy = false
-        }
-    }
-
-    private func handleApple(_ result: Result<ASAuthorization, Error>) {
-        switch result {
-        case .success(let auth):
-            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = credential.identityToken,
-                  let token = String(data: tokenData, encoding: .utf8) else {
-                error = "Apple didn't return a sign-in token. Please try again."
-                return
-            }
-            busy = true
-            error = nil
-            Task {
-                do {
-                    try await sync.signInWithApple(idToken: token, nonce: nonce, fullName: credential.fullName)
-                    Haptics.success()
-                } catch {
-                    self.error = Backend.message(for: error)
-                    Haptics.warning()
-                }
-                busy = false
-            }
-        case .failure(let failure):
-            if (failure as? ASAuthorizationError)?.code == .canceled { return }
-            error = failure.localizedDescription
-        }
-    }
-
-    static func randomNonce(length: Int = 32) -> String {
-        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        var generator = SystemRandomNumberGenerator()
-        return String((0..<length).map { _ in charset.randomElement(using: &generator)! })
-    }
-
-    static func sha256(_ input: String) -> String {
-        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-private struct AuthField: View {
+struct AuthField: View {
     var symbol: String
     var placeholder: String
     @Binding var text: String
@@ -344,14 +163,14 @@ struct SetupView: View {
         switch path {
         case .choose: "Start your shared pregnancy, or join the one your partner already set up."
         case .start: "We'll use this to label who's who and to word things for each of you."
-        case .join: "Enter the 6-character code from your partner's Bloom."
+        case .join: "Enter the 6-character code from your partner's Carry."
         }
     }
 
     private var chooser: some View {
         VStack(spacing: 14) {
             ChoiceCard(emoji: "🌱", title: "Start our pregnancy",
-                       detail: store.isOnboarded ? "Shares what's already in Bloom on this phone." : "Set up the details, then invite your partner.",
+                       detail: store.isOnboarded ? "Shares what's already in Carry on this phone." : "Set up the details, then invite your partner.",
                        fill: Theme.blushSoft) {
                 path = .start
             }
@@ -389,7 +208,7 @@ struct SetupView: View {
             Button {
                 start()
             } label: {
-                if busy { ProgressView().tint(.white) } else { Text(store.isOnboarded ? "Start and get the invite code" : "Continue") }
+                if busy { CarrySpinner(size: 22, color: .white) } else { Text(store.isOnboarded ? "Start and get the invite code" : "Continue") }
             }
             .buttonStyle(BloomPrimaryButtonStyle())
             .disabled(role == nil || busy)
@@ -413,14 +232,14 @@ struct SetupView: View {
                     if cleaned != value { code = cleaned }
                 }
 
-            Label("Bloom shares information, not medical advice. Always follow your care team.", systemImage: "heart.text.square")
+            Label("Carry shares information, not medical advice. Always follow your care team.", systemImage: "heart.text.square")
                 .font(.bloom(.footnote, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
 
             Button {
                 if store.hasLocalData { confirmDiscard = true } else { join() }
             } label: {
-                if busy { ProgressView().tint(.white) } else { Text("Join") }
+                if busy { CarrySpinner(size: 22, color: .white) } else { Text("Join") }
             }
             .buttonStyle(BloomPrimaryButtonStyle())
             .disabled(code.count != 6 || busy)
@@ -560,7 +379,7 @@ struct WelcomeSheetView: View {
     private var subtitle: String {
         switch welcome {
         case .invite:
-            return "They sign in to Bloom, tap Join with a code and enter this. You'll both see the same milestones and meds."
+            return "They sign in to Carry, tap Join with a code and enter this. You'll both see the same milestones and meds."
         case .joined(let role):
             let other = store.name(for: role.other)
             return "You joined \(other)'s pregnancy as the \(role.rawValue). Milestones and meds now stay in step on both phones."
@@ -585,7 +404,7 @@ struct InviteCodeCard: View {
                 .foregroundStyle(Theme.blushDeep)
                 .textSelection(.enabled)
                 .accessibilityLabel("Invite code \(code.map(String.init).joined(separator: " "))")
-            ShareLink(item: "Join our pregnancy on Bloom 🌷 Open Bloom, tap \"Join with a code\" and enter \(code)") {
+            ShareLink(item: "Join our pregnancy on Carry 🌷 Open Carry, tap \"Join with a code\" and enter \(code)") {
                 Label("Share code", systemImage: "square.and.arrow.up")
             }
             .buttonStyle(BloomSoftButtonStyle())

@@ -91,6 +91,7 @@ struct RightNowWidget: Widget {
         StaticConfiguration(kind: kind, provider: RightNowProvider()) { entry in
             RightNowWidgetView(entry: entry)
                 .containerBackground(for: .widget) { DayWidgetBackground() }
+                .widgetURL(CarryLink.meds)
         }
         .configurationDisplayName("Right now")
         .description("The dose that's due, your no-food countdown and today's list.")
@@ -156,7 +157,7 @@ private struct RightNowMain: View {
 
     @ViewBuilder private var content: some View {
         if !entry.onboarded {
-            message(title: "Open Bloom", subtitle: "to get started")
+            message(title: "Open Carry", subtitle: "to get started")
         } else if let dose = entry.due.first {
             DueBlock(dose: dose, extra: entry.due.count - 1, p: p)
         } else if let window = entry.window {
@@ -462,8 +463,8 @@ private struct RightNowRectangular: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             if !entry.onboarded {
-                Text("Bloom").font(.headline)
-                Text("Open Bloom to get started").font(.caption)
+                Text("Carry").font(.headline)
+                Text("Open Carry to get started").font(.caption)
             } else if let dose = entry.due.first {
                 Text(dose.medication.shortName).font(.headline).lineLimit(1).minimumScaleFactor(0.6)
                 Text("Due \(clock(dose.scheduledAt))").font(.caption).monospacedDigit()

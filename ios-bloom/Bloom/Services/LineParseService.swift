@@ -687,7 +687,7 @@ enum RegimenAssembler {
             }
         }
         for i in summaries.indices where summaries[i].problem == nil && summaries[i].items.isEmpty {
-            summaries[i].problem = "Bloom couldn't find a timing rule here."
+            summaries[i].problem = "Carry couldn't find a timing rule here."
         }
         // Stable: medications that never own a line keep their first-mention place after the rest.
         drafts = drafts.enumerated()

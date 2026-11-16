@@ -16,7 +16,6 @@ struct HowItsGoingView: View {
         let done = today.filter { !$0.isPending }.count
         let week = store.weekCounts(owner)
         let streak = store.streak(owner)
-        let days = store.lastDays(owner, count: 7)
         let notes = store.observations(owner)
 
         NavigationStack {
@@ -36,7 +35,7 @@ struct HowItsGoingView: View {
                             tile("Streak", streak.current == 1 ? "1 day" : "\(streak.current) days", "best \(streak.best)", green: true)
                         }
                     }
-                    chart(days)
+                    chart(store.streakBars(owner))
                     if !notes.isEmpty {
                         VStack(spacing: 0) {
                             ForEach(Array(notes.enumerated()), id: \.element.id) { index, note in
@@ -104,38 +103,47 @@ struct HowItsGoingView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func chart(_ days: [[DoseInstance]]) -> some View {
-        let cal = PregnancyMath.calendar
-        let today = cal.startOfDay(for: store.now)
-        return VStack(alignment: .leading, spacing: 14) {
-            Text("Last 7 days")
+    /// The same two weeks as the streak row on Meds today, larger and with weekday letters.
+    private func chart(_ bars: [StreakBar]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Last 2 weeks")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Theme.dayText)
-            HStack(alignment: .bottom, spacing: 10) {
-                ForEach(Array(days.enumerated()), id: \.offset) { index, list in
-                    let day = PregnancyMath.addDays(index - (days.count - 1), to: today)
-                    let isToday = index == days.count - 1
-                    let fraction = list.isEmpty ? 0 : CGFloat(list.filter { !$0.isPending }.count) / CGFloat(list.count)
-                    VStack(spacing: 8) {
-                        ZStack(alignment: .bottom) {
-                            Capsule().fill(Theme.dayDivider)
-                            Capsule()
-                                .fill(isToday ? Theme.rose : Theme.greenDot)
-                                .frame(height: max(fraction > 0 ? 8 : 0, 110 * fraction))
+            GeometryReader { geo in
+                let gap: CGFloat = 6
+                let width = max(4, (geo.size.width - gap * 13) / 14)
+                VStack(alignment: .leading, spacing: 8) {
+                    StreakBars(bars: bars, barWidth: width, gap: gap, height: 110)
+                    HStack(spacing: gap) {
+                        ForEach(bars) { bar in
+                            Text(String(bar.day.formatted(.dateTime.weekday(.narrow))))
+                                .font(.system(size: 12, weight: bar.kind == .today ? .semibold : .regular))
+                                .foregroundStyle(bar.kind == .today ? Theme.dayText : Theme.dayMuted)
+                                .frame(width: width)
                         }
-                        .frame(height: 110)
-                        Text(String(day.formatted(.dateTime.weekday(.narrow))))
-                            .font(.system(size: 13, weight: isToday ? .semibold : .regular))
-                            .foregroundStyle(isToday ? Theme.rose : Theme.dayMuted)
                     }
-                    .frame(maxWidth: .infinity)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(day.formatted(.dateTime.weekday(.wide))): \(list.filter { !$0.isPending }.count) of \(list.count) logged")
                 }
             }
+            .frame(height: 136)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Last 2 weeks")
+            .accessibilityValue(StreakBars.summary(bars))
+            HStack(spacing: 14) {
+                legend(opacity: 1, "Share taken")
+                legend(opacity: 0.35, "A dose missed")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.dayMuted)
         }
         .padding(16)
         .background(Theme.dayCard, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
+    }
+
+    private func legend(opacity: Double, _ label: String) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2).fill(Theme.daySecondary.opacity(opacity)).frame(width: 6, height: 12)
+            Text(label)
+        }
     }
 
     private func observation(_ note: ProgressObservation) -> some View {

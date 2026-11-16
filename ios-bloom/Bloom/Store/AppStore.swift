@@ -1070,7 +1070,7 @@ final class AppStore {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(state) else { return nil }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Bloom-export.json")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Carry-export.json")
         do {
             try data.write(to: url, options: .atomic)
             return url

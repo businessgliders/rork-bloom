@@ -90,7 +90,7 @@ struct RoutineHeader: View {
                         Text("Set up your routine")
                             .font(.bloom(.headline, weight: .bold))
                             .foregroundStyle(Theme.text)
-                        Text("When \(isViewer ? "you wake, eat and sleep" : "\(store.name(for: owner)) wakes, eats and sleeps"). Bloom places every dose around it.")
+                        Text("When \(isViewer ? "you wake, eat and sleep" : "\(store.name(for: owner)) wakes, eats and sleeps"). Carry places every dose around it.")
                             .font(.bloom(.footnote))
                             .foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.leading)

@@ -2,7 +2,7 @@ import Foundation
 import EventKit
 import UIKit
 
-/// Two-way mirror between Bloom doses and a "Bloom Meds" list in Apple Reminders.
+/// Two-way mirror between Bloom doses and a "Carry Meds" list in Apple Reminders.
 ///
 /// - Covers doses from yesterday through tomorrow; older/newer reminders are tidied away.
 /// - Reminders carry no alarms: Bloom's own notifications already ping.
@@ -10,7 +10,9 @@ import UIKit
 final class RemindersSync {
     static let shared = RemindersSync()
 
-    static let listTitle = "Bloom Meds"
+    static let listTitle = "Carry Meds"
+    /// The list's name before the app was renamed; renamed in place when found.
+    static let oldListTitle = "Bloom Meds"
     private let eventStore = EKEventStore()
     private var isSyncing = false
     private var pendingResync = false
@@ -57,7 +59,7 @@ final class RemindersSync {
         UserDefaults.standard.removeObject(forKey: idsKey)
         guard authorized else { return }
         let calendar = id.flatMap { eventStore.calendar(withIdentifier: $0) }
-            ?? eventStore.calendars(for: .reminder).first { $0.title == Self.listTitle && $0.allowsContentModifications }
+            ?? eventStore.calendars(for: .reminder).first { ($0.title == Self.listTitle || $0.title == Self.oldListTitle) && $0.allowsContentModifications }
         guard let calendar else { return }
         try? eventStore.removeCalendar(calendar, commit: true)
     }
@@ -162,7 +164,7 @@ final class RemindersSync {
         var notes: [String] = []
         if !med.dose.trimmingCharacters(in: .whitespaces).isEmpty { notes.append(med.dose) }
         if med.foodRule != .any { notes.append(med.foodSummary) }
-        notes.append("From Bloom")
+        notes.append("From Carry")
         reminder.notes = notes.joined(separator: "\n")
         reminder.url = URL(string: "bloom://dose/\(med.id.uuidString)/\(Int(instance.scheduledAt.timeIntervalSince1970))")
         var comps = PregnancyMath.calendar.dateComponents([.year, .month, .day, .hour, .minute], from: instance.scheduledAt)
@@ -177,11 +179,19 @@ final class RemindersSync {
         }
     }
 
+    private func renameIfOld(_ calendar: EKCalendar) {
+        guard calendar.title == Self.oldListTitle, calendar.allowsContentModifications else { return }
+        calendar.title = Self.listTitle
+        try? eventStore.saveCalendar(calendar, commit: true)
+    }
+
     private func list(for store: AppStore) -> EKCalendar? {
         if let id = store.remindersListID, let existing = eventStore.calendar(withIdentifier: id) {
+            renameIfOld(existing)
             return existing
         }
-        if let existing = eventStore.calendars(for: .reminder).first(where: { $0.title == Self.listTitle && $0.allowsContentModifications }) {
+        if let existing = eventStore.calendars(for: .reminder).first(where: { ($0.title == Self.listTitle || $0.title == Self.oldListTitle) && $0.allowsContentModifications }) {
+            renameIfOld(existing)
             store.setRemindersListID(existing.calendarIdentifier)
             return existing
         }

@@ -51,7 +51,7 @@ struct RoutineQuizView: View {
                 } header: {
                     Text(isViewer ? "When do you usually…" : "When does \(name) usually…")
                 } footer: {
-                    Text("Rough times are fine. Bloom plans every dose around \(isViewer ? "your" : "\(name)'s") day and nothing after bedtime. Snacks count as food for no-food windows.")
+                    Text("Rough times are fine. Carry plans every dose around \(isViewer ? "your" : "\(name)'s") day and nothing after bedtime. Snacks count as food for no-food windows.")
                         .font(.bloom(.caption))
                 }
 

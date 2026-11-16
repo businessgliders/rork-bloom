@@ -48,6 +48,9 @@ struct MainTabView: View {
             }
         }
         .sensoryFeedback(.selection, trigger: selection)
+        // carry://meds from a widget, the Live Activity or a notification.
+        .onChange(of: DeepLinkRouter.shared.medsRequest) { _, _ in selection = .meds }
+        .onAppear { if DeepLinkRouter.shared.pendingMeds { selection = .meds } }
         // Invite code after starting, or "You're in" after joining.
         .sheet(item: Binding(get: { sync.welcome }, set: { sync.welcome = $0 })) { welcome in
             WelcomeSheetView(welcome: welcome)

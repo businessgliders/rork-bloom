@@ -27,7 +27,7 @@ struct MoveDoseSheet: View {
                         otherTime(plan)
                         if let chosen { scopeButtons(chosen, plan: plan) }
                     } else {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 160)
+                        CarrySpinner(size: 30).frame(maxWidth: .infinity, minHeight: 160)
                     }
                 }
                 .padding(20)

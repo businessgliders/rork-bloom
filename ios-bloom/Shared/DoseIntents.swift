@@ -7,7 +7,7 @@ import WidgetKit
 /// If it ever runs inside the widget extension, it edits the shared file directly.
 nonisolated struct MarkDoseTakenIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Mark dose taken"
-    static let description = IntentDescription("Logs a Bloom dose as taken right now.")
+    static let description = IntentDescription("Logs a Carry dose as taken right now.")
     static let isDiscoverable = false
 
     @Parameter(title: "Medication ID")

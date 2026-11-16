@@ -128,7 +128,7 @@ enum MedNotifications {
                         body += (body.isEmpty ? "" : " · ") + "Take with food"
                     default: break
                     }
-                    content.body = body.isEmpty ? "Tap to log it in Bloom." : body
+                    content.body = body.isEmpty ? "Tap to log it in Carry." : body
                     content.sound = .default
                     content.categoryIdentifier = doseCategory
                     content.userInfo = ["medID": med.id.uuidString, "scheduledAt": instance.scheduledAt.timeIntervalSince1970]
@@ -202,6 +202,21 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let content = response.notification.request.content
         if response.actionIdentifier == MedNotifications.snoozeAction {
             await MedNotifications.snooze(content)
+            return
+        }
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            // A plain tap: partner pushes carry a `link` (carry://meds) or a dose `type`.
+            let info = content.userInfo
+            let link = info["link"] as? String
+            let type = info["type"] as? String
+            let hasMed = info["medID"] != nil
+            await MainActor.run {
+                var routed: [AnyHashable: Any] = [:]
+                if let link { routed["link"] = link }
+                if let type { routed["type"] = type }
+                if hasMed { routed["medID"] = "1" }
+                DeepLinkRouter.shared.handleNotification(routed)
+            }
             return
         }
         guard response.actionIdentifier == MedNotifications.takenAction else { return }

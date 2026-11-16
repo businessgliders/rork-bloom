@@ -121,7 +121,7 @@ struct QuickAddMedicationView: View {
             Text("Just say it")
                 .font(.bloom(.largeTitle, weight: .heavy))
                 .foregroundStyle(Theme.text)
-            Text("Type it like you'd tell a friend. Bloom fills in the rest for you to check.")
+            Text("Type it like you'd tell a friend. Carry fills in the rest for you to check.")
                 .font(.bloom(.subheadline))
                 .foregroundStyle(Theme.textSecondary)
         }
@@ -213,7 +213,7 @@ struct QuickAddMedicationView: View {
             .accessibilityIdentifier("quick-add-photo")
         }
 
-        Label("Only text is sent to AI, never your photos. Bloom never suggests a dose.", systemImage: "lock.fill")
+        Label("Only text is sent to AI, never your photos. Carry never suggests a dose.", systemImage: "lock.fill")
             .font(.bloom(.footnote))
             .foregroundStyle(Theme.textSecondary)
 
@@ -238,7 +238,7 @@ struct QuickAddMedicationView: View {
                         .frame(width: 44, height: 44)
                         .clipShape(.circle)
                 } else if busy {
-                    ProgressView().tint(tint)
+                    CarrySpinner(size: 20, color: tint)
                 } else {
                     Image(systemName: icon)
                         .font(.system(size: 20, weight: .bold))
@@ -318,10 +318,10 @@ struct QuickAddMedicationView: View {
     @ViewBuilder
     private var consentStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Before Bloom reads it", systemImage: "hand.raised.fill")
+            Label("Before Carry reads it", systemImage: "hand.raised.fill")
                 .font(.bloom(.title3, weight: .heavy))
                 .foregroundStyle(Theme.text)
-            Text("To fill this in, Bloom sends only this text to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini:")
+            Text("To fill this in, Carry sends only this text to Rork's AI service, which passes it through Vercel AI Gateway to Google Gemini:")
                 .font(.bloom(.subheadline))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -567,7 +567,7 @@ struct QuickAddMedicationView: View {
         }
         .accessibilityIdentifier("review-edit-details")
 
-        Text("Bloom helps you remember. It doesn't give medical advice.")
+        Text("Carry helps you remember. It doesn't give medical advice.")
             .font(.bloom(.footnote))
             .foregroundStyle(Theme.textSecondary)
             .frame(maxWidth: .infinity)
@@ -938,7 +938,7 @@ private struct ChipEditorSheet: View {
             TextField("e.g. 1 tablet, 75 mcg", text: $draft.dose)
                 .font(.bloom(.title3, weight: .bold))
         } footer: {
-            Text("Copy this from your prescription label. Bloom never suggests doses.")
+            Text("Copy this from your prescription label. Carry never suggests doses.")
         }
     }
 
