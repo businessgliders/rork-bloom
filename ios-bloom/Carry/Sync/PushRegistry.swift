@@ -47,7 +47,7 @@ final class PushRegistry {
 
         if #available(iOS 17.2, *) {
             Task {
-                for await data in Activity<CarryActivityAttributes>.pushToStartTokenUpdates {
+                for await data in Activity<BloomActivityAttributes>.pushToStartTokenUpdates {
                     let hex = data.hexString
                     guard hex != self.startToken else { continue }
                     self.startToken = hex
@@ -56,18 +56,18 @@ final class PushRegistry {
             }
         }
 
-        for activity in Activity<CarryActivityAttributes>.activities {
+        for activity in Activity<BloomActivityAttributes>.activities {
             observe(activity)
         }
         Task { await sweepEnded() }
         Task {
-            for await activity in Activity<CarryActivityAttributes>.activityUpdates {
+            for await activity in Activity<BloomActivityAttributes>.activityUpdates {
                 self.observe(activity)
             }
         }
     }
 
-    private func observe(_ activity: Activity<CarryActivityAttributes>) {
+    private func observe(_ activity: Activity<BloomActivityAttributes>) {
         guard !observedActivities.contains(activity.id) else { return }
         let takerID = activity.attributes.takerID
         // Already over (e.g. ended while the app was closed): just clean up its row.
@@ -96,13 +96,13 @@ final class PushRegistry {
     }
 
     /// Called right after the app ends an activity, so the row goes even if the state stream is late.
-    func activityEnded(_ activity: Activity<CarryActivityAttributes>) {
+    func activityEnded(_ activity: Activity<BloomActivityAttributes>) {
         Task { await removeUpdateToken(activityID: activity.id, takerID: activity.attributes.takerID) }
     }
 
     /// Deletes rows for saved activities that are no longer running on this phone.
     private func sweepEnded() async {
-        let running = Set(Activity<CarryActivityAttributes>.activities
+        let running = Set(Activity<BloomActivityAttributes>.activities
             .filter { !Self.isOver($0.activityState) }
             .map(\.id))
         for (activityID, entry) in updateTokens where !running.contains(activityID) {

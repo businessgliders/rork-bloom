@@ -43,7 +43,7 @@ struct QuickAddMedicationView: View {
         } else {
             NavigationStack {
                 ZStack {
-                    CarryBackground()
+                    BloomBackground()
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             switch phase {
@@ -167,7 +167,7 @@ struct QuickAddMedicationView: View {
             } label: {
                 Label("Fill it in", systemImage: "sparkles")
             }
-            .buttonStyle(CarryPrimaryButtonStyle())
+            .buttonStyle(BloomPrimaryButtonStyle())
             .disabled(sentence.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
             .accessibilityIdentifier("quick-add-go")
         }
@@ -295,7 +295,7 @@ struct QuickAddMedicationView: View {
         } label: {
             Label("Use this text", systemImage: "sparkles")
         }
-        .buttonStyle(CarryPrimaryButtonStyle())
+        .buttonStyle(BloomPrimaryButtonStyle())
         .disabled(scanText.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
         .accessibilityIdentifier("scan-use-text")
 
@@ -304,12 +304,12 @@ struct QuickAddMedicationView: View {
                 Haptics.tap()
                 showScanCamera = true
             }
-            .buttonStyle(CarrySoftButtonStyle())
+            .buttonStyle(BloomSoftButtonStyle())
             Spacer()
             PhotosPicker(selection: $scanPickerItem, matching: .images) {
                 Text("Choose photo")
             }
-            .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
+            .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
         }
     }
 
@@ -341,12 +341,12 @@ struct QuickAddMedicationView: View {
                     store.setAILookupConsent(true)
                     run(pendingText)
                 }
-                .buttonStyle(CarrySoftButtonStyle(tint: .white, fill: Theme.roseButton))
+                .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                 .accessibilityIdentifier("ai-consent-allow")
                 Button("Fill in myself") {
                     openFullForm(prefillName: true)
                 }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
             }
         }
         .bloomCard(fill: Theme.blushSoft)
@@ -424,7 +424,7 @@ struct QuickAddMedicationView: View {
                         .font(.bloom(.subheadline, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                     Button("Use") { chooseTimes([DoseTime(date: customTime)]) }
-                        .buttonStyle(CarrySoftButtonStyle(tint: .white, fill: Theme.roseButton))
+                        .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.roseButton))
                 }
             }
             .bloomCard()
@@ -553,7 +553,7 @@ struct QuickAddMedicationView: View {
         Button(action: save) {
             Label("Save", systemImage: "checkmark")
         }
-        .buttonStyle(CarryPrimaryButtonStyle())
+        .buttonStyle(BloomPrimaryButtonStyle())
         .disabled(!draft.canSave)
         .accessibilityIdentifier("review-save")
 
@@ -632,7 +632,7 @@ struct QuickAddMedicationView: View {
                 .foregroundStyle(Theme.coralDeep)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Fill in myself") { openFullForm(prefillName: true) }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.coralDeep, fill: Theme.surface))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.coralDeep, fill: Theme.surface))
         }
         .bloomCard(fill: Theme.coralSoft, padding: 16)
     }

@@ -767,7 +767,7 @@ struct MedsOverviewView: View {
             }
             HStack(spacing: 10) {
                 Button(justLabel) { commitDrop(p, scope: .today) }
-                    .buttonStyle(CarryPrimaryButtonStyle())
+                    .buttonStyle(BloomPrimaryButtonStyle())
                     .accessibilityIdentifier("drop-just-today")
                 Button("Every day") { commitDrop(p, scope: .forward) }
                     .font(.system(size: 17, weight: .semibold))

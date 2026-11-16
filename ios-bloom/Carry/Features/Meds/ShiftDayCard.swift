@@ -43,7 +43,7 @@ struct ShiftDayCard: View {
                     } else {
                         HStack(spacing: 10) {
                             Button("Put back") { store.discardChange() }
-                                .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
+                                .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary, fill: Theme.surfaceMuted))
                                 .accessibilityIdentifier("shift-put-back")
                             Button {
                                 Haptics.tap()
@@ -51,7 +51,7 @@ struct ShiftDayCard: View {
                             } label: {
                                 Text("Done").frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(CarrySoftButtonStyle(tint: .white, fill: Theme.peachButton))
+                            .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.peachButton))
                             .accessibilityIdentifier("shift-done")
                         }
                         .transition(.opacity.combined(with: .move(edge: .top)))

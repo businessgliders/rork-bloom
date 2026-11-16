@@ -56,7 +56,7 @@ struct EditDatesView: View {
         }
         .font(.bloom(.body))
         .scrollContentBackground(.hidden)
-        .background(CarryBackground())
+        .background(BloomBackground())
         .navigationTitle("Due date")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

@@ -377,14 +377,14 @@ struct MedsTodayList: View {
             .clipped()
             HStack {
                 Button("Cancel") { picker = nil }
-                    .buttonStyle(CarrySoftButtonStyle(tint: Theme.daySecondary, fill: Theme.creamBox))
+                    .buttonStyle(BloomSoftButtonStyle(tint: Theme.daySecondary, fill: Theme.creamBox))
                 Spacer()
                 Text(value.title)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.daySecondary)
                 Spacer()
                 Button(value.doneLabel) { commit(value, range: range) }
-                    .buttonStyle(CarrySoftButtonStyle(tint: Theme.rose, fill: Theme.roseTint))
+                    .buttonStyle(BloomSoftButtonStyle(tint: Theme.rose, fill: Theme.roseTint))
                     .accessibilityIdentifier("picker-done")
             }
             .padding(.horizontal, 10)
@@ -577,7 +577,7 @@ struct MedsTodayList: View {
                     Haptics.select()
                     closeDoseMove()
                 }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.daySecondary, fill: Theme.creamBox))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.daySecondary, fill: Theme.creamBox))
                 .accessibilityIdentifier("move-cancel")
                 Spacer(minLength: 0)
                 Button {
@@ -589,7 +589,7 @@ struct MedsTodayList: View {
                     Label("Move", systemImage: warning ? "exclamationmark.triangle.fill" : "arrow.right")
                         .labelStyle(MoveLabelStyle(showIcon: warning))
                 }
-                .buttonStyle(CarrySoftButtonStyle(tint: warning ? Theme.terraText : Theme.rose,
+                .buttonStyle(BloomSoftButtonStyle(tint: warning ? Theme.terraText : Theme.rose,
                                                   fill: warning ? Theme.terraTint : Theme.roseTint))
                 .accessibilityIdentifier("move-confirm")
             }

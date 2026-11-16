@@ -151,7 +151,7 @@ struct SettingsView: View {
             }
             .font(.bloom(.body))
             .scrollContentBackground(.hidden)
-            .background(CarryBackground())
+            .background(BloomBackground())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -287,7 +287,7 @@ struct SettingsView: View {
                             ShareLink(item: "Join our pregnancy on Carry 🌷 Open Carry, tap \"Join with a code\" and enter \(code)") {
                                 Label("Share", systemImage: "square.and.arrow.up")
                             }
-                            .buttonStyle(CarrySoftButtonStyle())
+                            .buttonStyle(BloomSoftButtonStyle())
                         }
                     }
                     .padding(.vertical, 4)

@@ -135,7 +135,7 @@ private struct FoodStatusBand: View {
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.coralDeep, fill: Theme.surface.opacity(0.85)))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.coralDeep, fill: Theme.surface.opacity(0.85)))
                 .accessibilityIdentifier("take-now-empty")
             }
             .padding(20)
@@ -258,7 +258,7 @@ private struct FoodStatusBand: View {
                 .accessibilityIdentifier("rightnow-taken-wheel")
             HStack {
                 Button("Cancel") { editing = false }
-                    .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary))
+                    .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
                 Spacer()
                 Text("Taken at")
                     .font(.bloom(.footnote))
@@ -268,7 +268,7 @@ private struct FoodStatusBand: View {
                     editing = false
                     onChangeTaken(instance, min(max(editTime, range.lowerBound), range.upperBound))
                 }
-                .buttonStyle(CarrySoftButtonStyle())
+                .buttonStyle(BloomSoftButtonStyle())
                 .font(.bloom(.body, weight: .semibold))
                 .accessibilityIdentifier("rightnow-taken-save")
             }
@@ -349,7 +349,7 @@ private struct DueDoseView: View {
                 } label: {
                     Label("Taken", systemImage: "checkmark")
                 }
-                .buttonStyle(CarryPrimaryButtonStyle())
+                .buttonStyle(BloomPrimaryButtonStyle())
                 .accessibilityIdentifier("rightnow-taken")
 
                 timeChip
@@ -373,7 +373,7 @@ private struct DueDoseView: View {
                     Text("Skip")
                         .font(.bloom(.subheadline))
                 }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
                 .accessibilityIdentifier("rightnow-skip")
                 Spacer()
                 if extraDue > 0 {

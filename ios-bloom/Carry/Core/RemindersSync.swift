@@ -12,7 +12,7 @@ final class RemindersSync {
 
     static let listTitle = "Carry Meds"
     /// The list's name before the app was renamed; renamed in place when found.
-    static let oldListTitle = "Carry Meds"
+    static let oldListTitle = "Bloom Meds"
     private let eventStore = EKEventStore()
     private var isSyncing = false
     private var pendingResync = false

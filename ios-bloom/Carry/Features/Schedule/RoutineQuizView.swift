@@ -61,7 +61,7 @@ struct RoutineQuizView: View {
                     } label: {
                         Text(template == nil ? "Done" : "Save routine")
                     }
-                    .buttonStyle(CarryPrimaryButtonStyle())
+                    .buttonStyle(BloomPrimaryButtonStyle())
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                     .accessibilityIdentifier("quiz-done")

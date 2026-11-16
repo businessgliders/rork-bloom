@@ -11,7 +11,7 @@ struct SyncPromptView: View {
 
     var body: some View {
         ZStack {
-            CarryBackground()
+            BloomBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     ZStack {
@@ -49,7 +49,7 @@ struct SyncPromptView: View {
                         } label: {
                             Text("Sign in and sync")
                         }
-                        .buttonStyle(CarryPrimaryButtonStyle())
+                        .buttonStyle(BloomPrimaryButtonStyle())
 
                         Button {
                             Haptics.select()

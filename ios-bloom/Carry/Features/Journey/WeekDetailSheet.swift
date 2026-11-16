@@ -53,7 +53,7 @@ struct WeekDetailSheet: View {
                     .animation(.snappy, value: week)
                 }
             }
-            .background(CarryBackground())
+            .background(BloomBackground())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { dismiss() } label: { Image(systemName: "xmark") }

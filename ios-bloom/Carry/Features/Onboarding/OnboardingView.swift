@@ -24,7 +24,7 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            CarryBackground()
+            BloomBackground()
 
             // One centred reading column on wide displays (Duo inner, iPad);
             // full width on regular iPhones and the Duo outer display.
@@ -208,7 +208,7 @@ struct OnboardingStepLayout<Content: View>: View {
             .scrollDismissesKeyboard(.interactively)
 
             Button(buttonTitle, action: action)
-                .buttonStyle(CarryPrimaryButtonStyle())
+                .buttonStyle(BloomPrimaryButtonStyle())
                 .disabled(!buttonEnabled)
                 .padding(.horizontal, 24)
                 .padding(.bottom, 12)
@@ -262,7 +262,7 @@ private struct WelcomeStep: View {
                             Haptics.tap()
                             account()
                         }
-                        .buttonStyle(CarryPrimaryButtonStyle())
+                        .buttonStyle(BloomPrimaryButtonStyle())
                         Button("Use on this phone only", action: next)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.rose)
@@ -537,7 +537,7 @@ private struct RevealStep: View {
                     .padding(.vertical, 24)
                 }
                 Button("Wonderful", action: next)
-                    .buttonStyle(CarryPrimaryButtonStyle())
+                    .buttonStyle(BloomPrimaryButtonStyle())
                     .padding(.horizontal, 24)
                     .padding(.bottom, 12)
             }
@@ -585,7 +585,7 @@ private struct NoticeStep: View {
                 } label: {
                     Label("Read our privacy policy", systemImage: "doc.text")
                 }
-                .buttonStyle(CarrySoftButtonStyle())
+                .buttonStyle(BloomSoftButtonStyle())
             }
         }
         .sheet(isPresented: $showPrivacy) {
@@ -712,7 +712,7 @@ private struct PermissionCard: View {
                     .foregroundStyle(Theme.textSecondary)
             case .none:
                 Button("Allow", action: request)
-                    .buttonStyle(CarrySoftButtonStyle(tint: tint, fill: fill))
+                    .buttonStyle(BloomSoftButtonStyle(tint: tint, fill: fill))
             }
         }
         .bloomCard(padding: 18)

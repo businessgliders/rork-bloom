@@ -151,7 +151,7 @@ struct MoveDoseSheet: View {
             Label("Other time…", systemImage: "clock")
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(CarrySoftButtonStyle())
+        .buttonStyle(BloomSoftButtonStyle())
         .accessibilityIdentifier("move-other-time")
         if showWheel {
             VStack(spacing: 8) {
@@ -168,7 +168,7 @@ struct MoveDoseSheet: View {
                 } label: {
                     Text("Check \(wheelTime.formatted(date: .omitted, time: .shortened))")
                 }
-                .buttonStyle(CarryPrimaryButtonStyle())
+                .buttonStyle(BloomPrimaryButtonStyle())
                 .accessibilityIdentifier("move-check-time")
             }
             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -191,7 +191,7 @@ struct MoveDoseSheet: View {
             } label: {
                 Text("Just today")
             }
-            .buttonStyle(CarryPrimaryButtonStyle())
+            .buttonStyle(BloomPrimaryButtonStyle())
             .accessibilityIdentifier("move-today")
             Button {
                 store.applyMove(owner: med.owner, day: day, option: option, medicationID: med.id, scope: .forward)
@@ -200,7 +200,7 @@ struct MoveDoseSheet: View {
                 Text(ScheduleChangePanel.everyLabel(plan.routineName))
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(CarrySoftButtonStyle())
+            .buttonStyle(BloomSoftButtonStyle())
             .accessibilityIdentifier("move-forward")
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))

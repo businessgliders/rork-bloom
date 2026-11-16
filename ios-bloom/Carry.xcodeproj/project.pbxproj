@@ -668,7 +668,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				CODE_SIGN_ENTITLEMENTS = CarryWidget/CarryWidget.entitlements;
+				CODE_SIGN_ENTITLEMENTS = BloomWidget/BloomWidget.entitlements;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "WIDGET_EXTENSION $(inherited)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				GENERATE_INFOPLIST_FILE = YES;
@@ -692,7 +692,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				CODE_SIGN_ENTITLEMENTS = CarryWidget/CarryWidget.entitlements;
+				CODE_SIGN_ENTITLEMENTS = BloomWidget/BloomWidget.entitlements;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "WIDGET_EXTENSION $(inherited)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				GENERATE_INFOPLIST_FILE = YES;

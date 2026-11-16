@@ -50,7 +50,7 @@ struct RuleProblemCard: View {
                         .font(.bloom(.subheadline, weight: .semibold))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(CarrySoftButtonStyle())
+                .buttonStyle(BloomSoftButtonStyle())
                 .accessibilityIdentifier("rule-fix")
             }
             if fixes.isEmpty {

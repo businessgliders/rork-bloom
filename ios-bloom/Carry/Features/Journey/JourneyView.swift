@@ -46,7 +46,7 @@ struct JourneyView: View {
                         .frame(maxWidth: 640)
                         .frame(maxWidth: .infinity)
                     }
-                    .background(CarryBackground())
+                    .background(BloomBackground())
                 }
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {

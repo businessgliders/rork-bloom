@@ -38,7 +38,7 @@ struct PrivacyPolicyView: View {
             }
             .padding(20)
         }
-        .background(CarryBackground())
+        .background(BloomBackground())
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

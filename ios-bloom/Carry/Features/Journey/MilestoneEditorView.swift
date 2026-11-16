@@ -91,7 +91,7 @@ struct MilestoneEditorView: View {
             }
             .font(.bloom(.body))
             .scrollContentBackground(.hidden)
-            .background(CarryBackground())
+            .background(BloomBackground())
             .navigationTitle(isNew ? "New milestone" : "Milestone")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

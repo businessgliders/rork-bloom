@@ -509,7 +509,7 @@ struct MedsView: View {
                     } label: {
                         Text(store.hasRoutine(owner) ? "Write my medications" : "Set up your routine")
                     }
-                    .buttonStyle(CarryPrimaryButtonStyle())
+                    .buttonStyle(BloomPrimaryButtonStyle())
                     .frame(maxWidth: 360)
                     .padding(.top, 6)
                     .accessibilityIdentifier("meds-setup")

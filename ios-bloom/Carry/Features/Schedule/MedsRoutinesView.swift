@@ -315,11 +315,11 @@ struct MedsRoutinesView: View {
                         store.setAILookupConsent(true)
                         runParse()
                     }
-                    .buttonStyle(CarrySoftButtonStyle(tint: .white, fill: Theme.rose))
+                    .buttonStyle(BloomSoftButtonStyle(tint: .white, fill: Theme.rose))
                     .accessibilityIdentifier("ai-consent-allow")
                     if store.aiLookupConsent == nil {
                         Button("Not now") { store.setAILookupConsent(false) }
-                            .buttonStyle(CarrySoftButtonStyle(tint: Theme.daySecondary, fill: Theme.dayCard))
+                            .buttonStyle(BloomSoftButtonStyle(tint: Theme.daySecondary, fill: Theme.dayCard))
                     }
                 }
             }
@@ -649,7 +649,7 @@ struct RoutineDaysSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(24)
-            .background(CarryBackground())
+            .background(BloomBackground())
         }
     }
 
@@ -780,7 +780,7 @@ struct MedDetailsSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(CarryBackground())
+            .background(BloomBackground())
             .navigationTitle(current.shortName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

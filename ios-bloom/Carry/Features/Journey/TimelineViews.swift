@@ -59,7 +59,7 @@ struct TimelineTabView: View {
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
                 .duoListClearance()
-                .background(CarryBackground())
+                .background(BloomBackground())
                 .navigationTitle("Timeline")
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {

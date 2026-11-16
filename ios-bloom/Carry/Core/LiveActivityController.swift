@@ -7,7 +7,7 @@ import ActivityKit
 /// them on both phones with push tokens registered by `PushRegistry`.
 @MainActor
 enum LiveActivityController {
-    private static var lastStates: [String: CarryActivityAttributes.ContentState] = [:]
+    private static var lastStates: [String: BloomActivityAttributes.ContentState] = [:]
 
     private struct TakerGroup {
         var takerID: String
@@ -34,7 +34,7 @@ enum LiveActivityController {
     static func sync(store: AppStore) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let now = Date.now
-        var remaining = Activity<CarryActivityAttributes>.activities
+        var remaining = Activity<BloomActivityAttributes>.activities
 
         let groups = (store.liveActivitiesEnabled && store.isOnboarded) ? groups(store: store) : []
 
@@ -65,7 +65,7 @@ enum LiveActivityController {
             } else {
                 // A lingering "all done" card would contradict the new dose, so clear it first.
                 end(mine, takerID: group.takerID, immediately: true)
-                let attributes = CarryActivityAttributes(
+                let attributes = BloomActivityAttributes(
                     momName: store.profile?.momName ?? "",
                     takerID: group.takerID,
                     takerName: group.name,
@@ -91,14 +91,14 @@ enum LiveActivityController {
 
     static func endAll() {
         lastStates = [:]
-        end(Activity<CarryActivityAttributes>.activities, takerID: nil, immediately: true)
+        end(Activity<BloomActivityAttributes>.activities, takerID: nil, immediately: true)
     }
 
     /// Ends with an "all caught up" state that lingers for a while, unless `immediately`.
     private static func end(
-        _ activities: [Activity<CarryActivityAttributes>],
+        _ activities: [Activity<BloomActivityAttributes>],
         takerID: String?,
-        final: CarryActivityAttributes.ContentState? = nil,
+        final: BloomActivityAttributes.ContentState? = nil,
         immediately: Bool = false
     ) {
         let live = activities.filter { $0.activityState == .active || $0.activityState == .stale || immediately }

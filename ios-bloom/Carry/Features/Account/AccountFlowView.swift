@@ -11,7 +11,7 @@ struct AccountFlowView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                CarryBackground()
+                BloomBackground()
                 Group {
                     if !sync.isSignedIn {
                         SignInView()
@@ -210,7 +210,7 @@ struct SetupView: View {
             } label: {
                 if busy { CarrySpinner(size: 22, color: .white) } else { Text(store.isOnboarded ? "Start and get the invite code" : "Continue") }
             }
-            .buttonStyle(CarryPrimaryButtonStyle())
+            .buttonStyle(BloomPrimaryButtonStyle())
             .disabled(role == nil || busy)
             .padding(.top, 6)
         }
@@ -241,7 +241,7 @@ struct SetupView: View {
             } label: {
                 if busy { CarrySpinner(size: 22, color: .white) } else { Text("Join") }
             }
-            .buttonStyle(CarryPrimaryButtonStyle())
+            .buttonStyle(BloomPrimaryButtonStyle())
             .disabled(code.count != 6 || busy)
         }
     }
@@ -331,7 +331,7 @@ struct WelcomeSheetView: View {
 
     var body: some View {
         ZStack {
-            CarryBackground()
+            BloomBackground()
             VStack(spacing: 22) {
                 Spacer(minLength: 8)
                 ZStack {
@@ -356,7 +356,7 @@ struct WelcomeSheetView: View {
                 }
                 Spacer(minLength: 8)
                 Button(primaryTitle) { dismiss() }
-                    .buttonStyle(CarryPrimaryButtonStyle())
+                    .buttonStyle(BloomPrimaryButtonStyle())
             }
             .padding(24)
             .frame(maxWidth: 520)
@@ -407,7 +407,7 @@ struct InviteCodeCard: View {
             ShareLink(item: "Join our pregnancy on Carry 🌷 Open Carry, tap \"Join with a code\" and enter \(code)") {
                 Label("Share code", systemImage: "square.and.arrow.up")
             }
-            .buttonStyle(CarrySoftButtonStyle())
+            .buttonStyle(BloomSoftButtonStyle())
             .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
         }
         .frame(maxWidth: .infinity)

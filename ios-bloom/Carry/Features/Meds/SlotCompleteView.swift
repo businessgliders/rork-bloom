@@ -13,7 +13,7 @@ struct SlotCompleteView: View {
 
     var body: some View {
         ZStack {
-            CarryBackground()
+            BloomBackground()
             CenteredScroll {
                 VStack(spacing: 22) {
                     Text("\(celebration.slot.title) done!")
@@ -54,7 +54,7 @@ struct SlotCompleteView: View {
                     }
 
                     Button("Lovely, thanks", action: onDone)
-                        .buttonStyle(CarryPrimaryButtonStyle())
+                        .buttonStyle(BloomPrimaryButtonStyle())
                         .padding(.top, 8)
                         .frame(maxWidth: 360)
                 }

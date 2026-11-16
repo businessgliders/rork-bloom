@@ -225,7 +225,7 @@ struct EmailSignInSheet: View {
                     } label: {
                         if busy { CarrySpinner(size: 22, color: .white) } else { Text(mode == .signIn ? "Sign in" : "Create account") }
                     }
-                    .buttonStyle(CarryPrimaryButtonStyle(tint: Theme.rose))
+                    .buttonStyle(BloomPrimaryButtonStyle(tint: Theme.rose))
                     .disabled(!canSubmit || busy)
                     .padding(.top, 4)
                 }

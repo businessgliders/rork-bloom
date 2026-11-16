@@ -78,7 +78,7 @@ struct ScheduleChangePanel: View {
                 } label: {
                     Text("Use \(ScheduleEngine.clock(s))")
                 }
-                .buttonStyle(CarryPrimaryButtonStyle())
+                .buttonStyle(BloomPrimaryButtonStyle())
                 .accessibilityIdentifier("change-use-suggestion")
             }
         }
@@ -93,19 +93,19 @@ struct ScheduleChangePanel: View {
                             .font(.bloom(.subheadline, weight: .semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(CarrySoftButtonStyle())
+                    .buttonStyle(BloomSoftButtonStyle())
                     .accessibilityIdentifier("change-fix")
                 }
             }
         }
         HStack {
             Button("Keep anyway") { store.keepAnyway() }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
                 .font(.bloom(.subheadline))
                 .accessibilityIdentifier("change-keep")
             Spacer()
             Button(undoLabel) { store.discardChange() }
-                .buttonStyle(CarrySoftButtonStyle())
+                .buttonStyle(BloomSoftButtonStyle())
                 .accessibilityIdentifier("change-undo")
         }
     }
@@ -156,7 +156,7 @@ struct ScheduleChangePanel: View {
             } label: {
                 Text(change.isNextDay ? "Just tomorrow" : "Just today")
             }
-            .buttonStyle(CarryPrimaryButtonStyle())
+            .buttonStyle(BloomPrimaryButtonStyle())
             .disabled(change.needsConfirmation)
             .opacity(change.needsConfirmation ? 0.5 : 1)
             .accessibilityIdentifier("change-today")
@@ -165,7 +165,7 @@ struct ScheduleChangePanel: View {
             // A late dose moving tomorrow morning is a one-off: never offered as a new routine time.
             if !change.isNextDay {
                 Button(forwardLabel) { store.applyChange(.forward) }
-                    .buttonStyle(CarrySoftButtonStyle())
+                    .buttonStyle(BloomSoftButtonStyle())
                     .font(.bloom(.subheadline, weight: .semibold))
                     .disabled(change.needsConfirmation)
                     .opacity(change.needsConfirmation ? 0.5 : 1)
@@ -173,7 +173,7 @@ struct ScheduleChangePanel: View {
             }
             Spacer()
             Button(undoLabel) { store.discardChange() }
-                .buttonStyle(CarrySoftButtonStyle(tint: Theme.textSecondary))
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.textSecondary))
                 .accessibilityIdentifier("change-undo")
         }
     }

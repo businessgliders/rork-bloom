@@ -36,7 +36,7 @@ struct AdaptiveColumns<Primary: View, Secondary: View, Compact: View>: View {
                 // which painted the canvas blobs over the panes. The compact branch
                 // supplies its own background.
                 ZStack {
-                    CarryBackground()
+                    BloomBackground()
                     TwoPaneLayout { primary } secondary: { secondary }
                 }
                 .transition(.opacity)
