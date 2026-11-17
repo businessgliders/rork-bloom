@@ -169,13 +169,13 @@ struct SetupView: View {
 
     private var chooser: some View {
         VStack(spacing: 14) {
-            ChoiceCard(emoji: "🌱", title: "Start our pregnancy",
+            ChoiceCard(symbol: "leaf.fill", title: "Start our pregnancy",
                        detail: store.isOnboarded ? "Shares what's already in Carry on this phone." : "Set up the details, then invite your partner.",
                        fill: Theme.blushSoft) {
                 path = .start
             }
-            ChoiceCard(emoji: "🔑", title: "Join with a code",
-                       detail: "Your partner finds it in Settings › Together.",
+            ChoiceCard(symbol: "key.fill", title: "Join with a code",
+                       detail: "Your partner finds it in Settings › You two.",
                        fill: Theme.peachSoft) {
                 path = .join
                 codeFocused = true
@@ -191,7 +191,7 @@ struct SetupView: View {
                     role = option
                 } label: {
                     HStack(spacing: 14) {
-                        Text(option == .mom ? "🤰" : "🫶").font(.system(size: 30))
+                        Image(systemName: option == .mom ? "figure.stand" : "person.fill").font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.rose).frame(width: 34)
                         Text(option == .mom ? "I'm the mom" : "I'm the partner")
                             .font(.bloom(.title3, weight: .bold))
                             .foregroundStyle(Theme.text)
@@ -285,7 +285,7 @@ struct SetupView: View {
 }
 
 private struct ChoiceCard: View {
-    var emoji: String
+    var symbol: String
     var title: String
     var detail: String
     var fill: Color
@@ -299,7 +299,7 @@ private struct ChoiceCard: View {
             HStack(spacing: 16) {
                 ZStack {
                     BlobShape(seed: title.count).fill(fill).frame(width: 60, height: 56)
-                    Text(emoji).font(.system(size: 28))
+                    Image(systemName: symbol).font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.rose)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
@@ -336,7 +336,7 @@ struct WelcomeSheetView: View {
                 Spacer(minLength: 8)
                 ZStack {
                     BlobShape(seed: 5).fill(Theme.blushSoft).frame(width: 150, height: 140)
-                    Text(emoji).font(.system(size: 64))
+                    Image(systemName: symbol).font(.system(size: 54, weight: .semibold)).foregroundStyle(Theme.rose)
                 }
                 .accessibilityHidden(true)
 
@@ -364,9 +364,9 @@ struct WelcomeSheetView: View {
         .presentationDetents([.large])
     }
 
-    private var emoji: String {
-        if case .joined = welcome { return "🫶" }
-        return "💌"
+    private var symbol: String {
+        if case .joined = welcome { return "person.2.fill" }
+        return "envelope.fill"
     }
 
     private var title: String {
@@ -404,7 +404,7 @@ struct InviteCodeCard: View {
                 .foregroundStyle(Theme.blushDeep)
                 .textSelection(.enabled)
                 .accessibilityLabel("Invite code \(code.map(String.init).joined(separator: " "))")
-            ShareLink(item: "Join our pregnancy on Carry 🌷 Open Carry, tap \"Join with a code\" and enter \(code)") {
+            ShareLink(item: "Join our pregnancy on Carry. Open Carry, tap \"Join with a code\" and enter \(code)") {
                 Label("Share code", systemImage: "square.and.arrow.up")
             }
             .buttonStyle(BloomSoftButtonStyle())

@@ -25,6 +25,8 @@ struct MedsTodayList: View {
     @State private var picker: InlinePicker?
     @State private var doseMove: DoseMove?
     @State private var settle: Task<Void, Never>?
+    /// The row whose "When did you take it?" menu is open.
+    @State private var logMenu: String?
 
     fileprivate enum Entry: Identifiable {
         case dose(DoseInstance)
@@ -268,44 +270,83 @@ struct MedsTodayList: View {
         .accessibilityIdentifier("today-row-\(med.shortName)")
     }
 
-    /// Tap: taken now (or undo). Long-press: Now / Planned time / Pick a time / Skip.
+    /// Pending: a tap within 10 minutes of the planned time logs it as now; otherwise (or on long-press)
+    /// a small "When did you take it?" menu opens on the circle. Logged: tap undoes, long-press corrects.
+    @ViewBuilder
     private func check(_ instance: DoseInstance, entryID: String) -> some View {
+        if instance.isPending {
+            pendingCheck(instance, entryID: entryID)
+        } else {
+            loggedCheck(instance, entryID: entryID)
+        }
+    }
+
+    private func pendingCheck(_ instance: DoseInstance, entryID: String) -> some View {
         let med = instance.medication
-        let nowTime = PregnancyMath.calendar.isDate(instance.scheduledAt, inSameDayAs: .now) ? Date.now : instance.scheduledAt
+        let isOpen = Binding(get: { logMenu == entryID }, set: { if !$0, logMenu == entryID { logMenu = nil } })
+        return CheckCircle(state: .open)
+            .scaleEffect(logMenu == entryID ? 0.9 : 1)
+            .animation(.snappy(duration: 0.18), value: logMenu == entryID)
+            .onTapGesture {
+                let today = PregnancyMath.calendar.isDate(instance.scheduledAt, inSameDayAs: .now)
+                if today, abs(Date.now.timeIntervalSince(instance.scheduledAt)) <= 600 {
+                    actions.taken(instance, .now)
+                } else {
+                    openLogMenu(entryID)
+                }
+            }
+            .onLongPressGesture(minimumDuration: 0.4) { openLogMenu(entryID) }
+            .popover(isPresented: isOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                TakenTimeMenu(
+                    instance: instance,
+                    question: takenQuestion(med),
+                    onPick: { time in
+                        logMenu = nil
+                        actions.taken(instance, time)
+                    },
+                    onSkip: {
+                        logMenu = nil
+                        actions.skip(instance)
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Mark \(med.shortName) taken")
+            .accessibilityAction { openLogMenu(entryID) }
+            .accessibilityIdentifier("today-check-\(med.shortName)")
+    }
+
+    private func openLogMenu(_ entryID: String) {
+        Haptics.select()
+        picker = nil
+        closeDoseMove()
+        logMenu = entryID
+    }
+
+    private func takenQuestion(_ med: Medication) -> String {
+        if store.isMine(med) { return "When did you take it?" }
+        return med.owner == .mom ? "When did she take it?" : "When did \(store.name(for: med.owner)) take it?"
+    }
+
+    private func loggedCheck(_ instance: DoseInstance, entryID: String) -> some View {
+        let med = instance.medication
         return Button {
-            if instance.isPending { actions.taken(instance, nowTime) } else { actions.undo(instance) }
+            actions.undo(instance)
         } label: {
-            CheckCircle(state: instance.isTaken ? .taken : (instance.isSkipped ? .skipped : .open))
+            CheckCircle(state: instance.isTaken ? .taken : .skipped)
         }
         .buttonStyle(PressableStyle())
         .contextMenu {
-            if instance.isPending {
-                Button { actions.taken(instance, nowTime) } label: { Label("Taken now", systemImage: "checkmark.circle") }
-                if instance.scheduledAt <= .now {
-                    Button { actions.taken(instance, instance.scheduledAt) } label: {
-                        Label("At planned time · \(DayList.clock(instance.scheduledAt))", systemImage: "clock")
-                    }
-                }
-                if let before = store.takenTimeBeforeUndo(instance) {
-                    Button { actions.taken(instance, before) } label: {
-                        Label("At \(DayList.clock(before)) (before undo)", systemImage: "arrow.uturn.backward.circle")
-                    }
-                }
+            if instance.isTaken {
                 Button { openLogPicker(entryID: entryID, instance: instance) } label: {
-                    Label("Pick a time…", systemImage: "clock.arrow.circlepath")
+                    Label("Change taken time…", systemImage: "clock.arrow.circlepath")
                 }
-                Divider()
-                Button { actions.skip(instance) } label: { Label("Skip today", systemImage: "forward.end") }
-            } else {
-                if instance.isTaken {
-                    Button { openLogPicker(entryID: entryID, instance: instance) } label: {
-                        Label("Change taken time…", systemImage: "clock.arrow.circlepath")
-                    }
-                }
-                Button(role: .destructive) { actions.undo(instance) } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
             }
+            Button(role: .destructive) { actions.undo(instance) } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
         }
-        .accessibilityLabel(instance.isPending ? "Mark \(med.shortName) taken" : "Undo \(med.shortName)")
+        .accessibilityLabel("Undo \(med.shortName)")
         .accessibilityIdentifier("today-check-\(med.shortName)")
     }
 

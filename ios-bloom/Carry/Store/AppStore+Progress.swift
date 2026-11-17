@@ -107,15 +107,13 @@ extension AppStore {
         return (0..<count).reversed().map { instances(owner, on: PregnancyMath.addDays(-$0, to: today)) }
     }
 
-    /// Last week + this week (Sunday to Saturday, like the week strip): one bar per day.
+    /// The last 14 days, rolling, ending today (today is the rightmost bar; no future days).
     func streakBars(_ owner: MedOwner) -> [StreakBar] {
         let cal = PregnancyMath.calendar
         let today = cal.startOfDay(for: now)
-        let sunday = PregnancyMath.addDays(-(cal.component(.weekday, from: today) - 1), to: today)
-        let start = PregnancyMath.addDays(-7, to: sunday)
+        let start = PregnancyMath.addDays(-13, to: today)
         return (0..<14).map { offset in
             let day = PregnancyMath.addDays(offset, to: start)
-            if day > today { return StreakBar(day: day, share: 0, missed: false, kind: .future) }
             let list = instances(owner, on: day)
             guard !list.isEmpty else { return StreakBar(day: day, share: 0, missed: false, kind: .nothingPlanned) }
             let taken = list.filter(\.isTaken).count

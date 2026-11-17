@@ -3,7 +3,7 @@ import ActivityKit
 import Supabase
 
 /// Keeps `device_tokens` in step with this phone's push tokens:
-/// - `apns`: regular notifications (partner alerts), only while partner alerts are on.
+/// - `apns`: regular notifications (the morning note, partner alerts), while either is on.
 /// - `live_activity_start`: push-to-start token for the meds Live Activity.
 /// - `live_activity_update`: one per running activity, `activity_id` = "{takerID}:{activityID}".
 /// The server (the user's Edge Function) uses these to start, update and end activities on both phones.
@@ -135,6 +135,8 @@ final class PushRegistry {
             for (activityID, entry) in updateTokens {
                 await upsert(token: entry.token, kind: .update, activityID: "\(entry.takerID):\(activityID)")
             }
+            // Creates the notification_prefs row with the defaults when missing.
+            await NotificationPrefs.shared.load()
             await syncAPNs()
         }
     }
@@ -152,7 +154,7 @@ final class PushRegistry {
 
     private func syncAPNs() async {
         guard let apnsToken else { return }
-        if AppStore.shared.partnerAlertsEnabled {
+        if AppStore.shared.partnerAlertsEnabled || NotificationPrefs.dailyNoteCached {
             await upsert(token: apnsToken, kind: .apns, activityID: nil)
         } else {
             _ = await delete(token: apnsToken, kind: .apns)

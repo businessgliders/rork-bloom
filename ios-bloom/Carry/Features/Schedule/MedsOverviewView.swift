@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Meds & routines (boards 2, 3, 4c, 6).
 /// Routine chips, a collapsible "My rules" card with her own words, then the day as one list
-/// (wake, meals, doses, bedtime). Wake / meal / bed times open an inline wheel; med times move by
-/// dragging the grip into the green band. First time (no meds yet) it goes straight to the editor.
+/// (wake, meals, doses, bedtime). Wake / meal / bed times open an inline wheel; a med's handle opens
+/// the centred Move card (board 19). First time (no meds yet) it goes straight to the editor.
 struct MedsOverviewView: View {
     var owner: MedOwner
     @Environment(AppStore.self) private var store
@@ -16,9 +16,8 @@ struct MedsOverviewView: View {
     @State private var openWheel: Kind?
     @State private var shiftOpen = false
 
-    // Drag
-    @State private var drag: DragState?
-    @State private var pendingDrop: PendingDrop?
+    // Move card
+    @State private var movePopup: MovePopup.Request?
 
     // After a change
     @State private var changed: [UUID: Int] = [:]
@@ -36,22 +35,6 @@ struct MedsOverviewView: View {
         var taken = false
         var id: Kind { kind }
     }
-
-    struct DragState {
-        var id: UUID
-        var name: String
-        var bands: DropBands
-        var translation: CGFloat = 0
-        var minute: Int
-    }
-
-    struct PendingDrop: Equatable {
-        var id: UUID
-        var name: String
-        var option: MoveOption
-    }
-
-    private static let bandHeight: CGFloat = 52
 
     private var isViewer: Bool { !store.isShared || owner == store.viewerRole }
 
@@ -110,8 +93,8 @@ struct MedsOverviewView: View {
                 caption(showMoveDay: false)
                 list
             }
-            .scrollDisabled(drag != nil)
             .background(Theme.dayCanvas.ignoresSafeArea())
+            .overlay { moveLayer }
         } compact: {
             PaneScroll(spacing: 16) {
                 header
@@ -121,23 +104,17 @@ struct MedsOverviewView: View {
                 shiftStrip
                 list
             }
-            .scrollDisabled(drag != nil)
             .background(Theme.dayCanvas.ignoresSafeArea())
+            .overlay { moveLayer }
         }
+        .animation(.easeOut(duration: 0.25), value: movePopup?.id)
         .navigationTitle("Meds & routines")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) { Text("") }
         }
-        // While a medication is lifted the tab bar (the Duo's side bar too) steps away; it returns on drop or cancel.
-        .toolbar(drag != nil ? .hidden : .visible, for: .tabBar)
-        .animation(.easeInOut(duration: 0.25), value: drag == nil)
         .safeAreaInset(edge: .bottom) {
-            if let pendingDrop {
-                dropBar(pendingDrop)
-                    .duoBarClearance()
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if let toast {
+            if let toast {
                 DarkToast(message: toast, onAction: undoEditorChange, onExpire: {
                     withAnimation { self.toast = nil }
                 })
@@ -147,7 +124,6 @@ struct MedsOverviewView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: pendingDrop)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: toast)
         .navigationDestination(isPresented: $showEditor) {
             MedsRoutinesView(owner: owner, editing: true, onApplied: editorApplied)
@@ -163,7 +139,7 @@ struct MedsOverviewView: View {
         }
         .onChange(of: selectedRoutine) {
             openWheel = nil
-            pendingDrop = nil
+            movePopup = nil
             changed = [:]
         }
         .onDisappear {
@@ -294,18 +270,12 @@ struct MedsOverviewView: View {
     @ViewBuilder
     private func caption(showMoveDay: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Group {
-                if let drag {
-                    Text("Moving \(Text(drag.name).bold()). Drop it anywhere in the green.")
-                } else {
-                    Text("Drag a handle to change a time")
-                }
-            }
+            Text("Tap a handle to change a time")
             .font(.system(size: 13))
-            .foregroundStyle(drag == nil ? Theme.dayMuted : Theme.dayText)
+            .foregroundStyle(Theme.dayMuted)
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            if showMoveDay && drag == nil { moveDayButton }
+            if showMoveDay { moveDayButton }
         }
         .padding(.horizontal, 4)
         .frame(minHeight: 32)
@@ -406,7 +376,6 @@ struct MedsOverviewView: View {
             let names = store.medicationNames
             var times = s.times
             if store.scheduleChange?.kind == .shift { times.merge(store.scheduleChange?.times ?? [:]) { _, new in new } }
-            if let pendingDrop { times.merge(pendingDrop.option.times) { _, new in new } }
             for (id, m) in times {
                 out.append(Entry(kind: .dose(id), minutes: m, name: names[id] ?? "Medication", taken: s.fixed.contains(id)))
             }
@@ -432,7 +401,7 @@ struct MedsOverviewView: View {
         let items = entries
         return DayCard {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, entry in
-                if index > 0 { DayDivider(inset: 16).opacity(drag == nil ? 1 : 0.45) }
+                if index > 0 { DayDivider(inset: 16) }
                 row(entry)
                 if openWheel == entry.kind, let r = routine {
                     wheel(entry.kind, original: r)
@@ -451,7 +420,6 @@ struct MedsOverviewView: View {
             medRow(entry, id: id)
         default:
             anchorRow(entry)
-                .opacity(drag == nil ? 1 : 0.45)
         }
     }
 
@@ -541,274 +509,85 @@ struct MedsOverviewView: View {
         .padding(.bottom, 6)
     }
 
-    // MARK: Med rows + drag
+    // MARK: Med rows + move popup
 
-    /// One structure whether lifted or not, so the grip's drag gesture survives the bands appearing.
     private func medRow(_ entry: Entry, id: UUID) -> some View {
-        let d = drag?.id == id ? drag : nil
-        let bands = d?.bands
-        let safe = bands?.safe
-        let g = bands.map(zoneHeight) ?? 0
-        let rowH = DayList.rowHeight
-        let center = bands.map { position($0.current, bands: $0) + (d?.translation ?? 0) } ?? 0
-        return VStack(spacing: d == nil ? 0 : 6) {
-            if let safe, let bands {
-                terraBand("Before \(ScheduleEngine.clock(safe.lowerBound)) · \(bands.beforeReason ?? "Another rule can't be kept")")
-                    .transition(.opacity)
-            }
-            ZStack(alignment: .top) {
-                if let safe, let bands {
-                    greenBand(safe: safe, current: bands.current)
-                        .padding(.vertical, rowH / 2 - 6)
-                        .transition(.opacity)
-                }
-                plainMedRow(entry, id: id, lifted: d != nil, minute: d?.minute)
-                    .offset(y: safe != nil ? center : (d.map { $0.translation / 4 } ?? 0))
-            }
-            .frame(height: safe != nil ? g + rowH : nil, alignment: .top)
-            if let safe, let bands {
-                terraBand("After \(ScheduleEngine.clock(safe.upperBound)) · \(bands.afterReason ?? "Another rule can't be kept")")
-                    .transition(.opacity)
-            } else if d != nil {
-                terraBand("Nothing else fits on this day")
-                    .transition(.opacity)
-            }
+        let was: String? = changed[id].map {
+            "was \(ScheduleEngine.clock($0).replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: ""))"
         }
-        .padding(.horizontal, d == nil ? 0 : 8)
-        .padding(.vertical, d == nil ? 0 : 8)
-        .opacity(drag == nil || d != nil ? 1 : 0.45)
-        .background(d == nil && (changed[id] != nil || pendingDrop?.id == id) ? Theme.greenTint : .clear)
-        .zIndex(d == nil ? 0 : 1)
-    }
-
-    private func plainMedRow(_ entry: Entry, id: UUID, lifted: Bool, minute: Int?) -> some View {
-        let was: String? = {
-            if lifted { return nil }
-            if let old = changed[id] { return "was \(ScheduleEngine.clock(old).replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: ""))" }
-            return nil
-        }()
         return DayRow(
-            time: ScheduleEngine.clock((minute ?? entry.minutes) % 1440),
+            time: ScheduleEngine.clock(entry.minutes % 1440),
             dot: entry.taken ? Theme.greenDot : Theme.rose,
             name: entry.name,
             muted: entry.taken,
-            timeColor: lifted ? Theme.rose : nil,
+            timeColor: movePopup?.id == id ? Theme.rose : nil,
             nameAction: {
-                guard drag == nil else { return }
                 Haptics.tap()
                 sheetMed = store.medications.first { $0.id == id }
             },
             identifier: entry.name,
             timeNote: was
         ) {
-            if !entry.taken && isViewerOrEditor {
-                grip(id: id, name: entry.name)
-            }
+            if !entry.taken { grip(id: id, name: entry.name) }
         }
-        .background {
-            if lifted {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Theme.dayCard)
-                    .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
-            }
-        }
-        .overlay {
-            if lifted {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.rose, lineWidth: 2)
-            }
-        }
+        .background(changed[id] != nil ? Theme.greenTint : .clear)
     }
 
-    private var isViewerOrEditor: Bool { true }
-
+    /// Tap or long-press: opens the centred Move card.
     private func grip(id: UUID, name: String) -> some View {
         Image(systemName: "line.3.horizontal")
             .font(.system(size: 17, weight: .medium))
             .foregroundStyle(Theme.dayMuted)
             .frame(width: 44, height: 44)
             .contentShape(.rect)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .onChanged { value in dragChanged(id: id, name: name, translation: value.translation.height) }
-                    .onEnded { _ in dragEnded() }
-            )
+            .onTapGesture { openMove(id: id, name: name) }
+            .onLongPressGesture(minimumDuration: 0.3) { openMove(id: id, name: name) }
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Move \(name)")
-            .accessibilityHint("Drag up or down to change the time")
+            .accessibilityHint("Opens a card to pick a new time")
+            .accessibilityAction { openMove(id: id, name: name) }
             .accessibilityIdentifier("grip-\(name)")
     }
 
-    private func zoneHeight(_ bands: DropBands) -> CGFloat {
-        guard let safe = bands.safe else { return DayList.rowHeight }
-        let span = CGFloat(safe.upperBound - safe.lowerBound)
-        return min(max(span * 0.8, 96), 260)
-    }
-
-    /// Where `m` sits inside the green band, from 0 (top) to G (bottom).
-    private func position(_ m: Int, bands: DropBands) -> CGFloat {
-        guard let safe = bands.safe else { return 0 }
-        let g = zoneHeight(bands)
-        let span = CGFloat(safe.upperBound - safe.lowerBound)
-        guard span > 0 else { return g / 2 }
-        return min(max(CGFloat(m - safe.lowerBound) / span * g, 0), g)
-    }
-
-    private func minute(at c: CGFloat, bands: DropBands) -> Int {
-        guard let safe = bands.safe else { return bands.current }
-        let g = zoneHeight(bands)
-        let span = CGFloat(safe.upperBound - safe.lowerBound)
-        let raw: CGFloat
-        if c < 0 {
-            raw = CGFloat(safe.lowerBound) + c * 1.5
-        } else if c > g {
-            raw = CGFloat(safe.upperBound) + (c - g) * 1.5
-        } else {
-            raw = span > 0 ? CGFloat(safe.lowerBound) + c / g * span : CGFloat(safe.lowerBound)
+    private func openMove(id: UUID, name: String) {
+        guard movePopup == nil, let bands = store.dropBands(owner: owner, day: day, medicationID: id) else { return }
+        Haptics.tap()
+        openWheel = nil
+        let markers: [MovePopup.Marker] = entries.compactMap { e in
+            if case .dose(let other) = e.kind, other == id { return nil }
+            let isMeal: Bool = { if case .meal = e.kind { return true }; return false }()
+            return MovePopup.Marker(name: e.name, minutes: e.minutes, isMeal: isMeal)
         }
-        let step = CGFloat(ScheduleEngine.step)
-        return Int((raw / step).rounded() * step)
+        movePopup = MovePopup.Request(id: id, name: name, bands: bands, markers: markers, day: day, owner: owner)
     }
 
-    private func dragChanged(id: UUID, name: String, translation: CGFloat) {
-        if drag == nil {
-            guard pendingDrop == nil, let bands = store.dropBands(owner: owner, day: day, medicationID: id) else { return }
-            Haptics.tap()
-            openWheel = nil
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                drag = DragState(id: id, name: name, bands: bands, minute: bands.current)
-            }
-            return
-        }
-        guard var d = drag, d.id == id else { return }
-        d.translation = translation
-        let c = position(d.bands.current, bands: d.bands) + translation
-        let m = min(max(minute(at: c, bands: d.bands), 0), 1439)
-        if m != d.minute { Haptics.select() }
-        d.minute = m
-        drag = d
-    }
-
-    private func dragEnded() {
-        guard let d = drag else { return }
-        let valid = d.bands.safe?.contains(d.minute) == true && d.minute != d.bands.current
-        let option = d.bands.options[d.minute]
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
-            if valid, let option {
-                Haptics.success()
-                pendingDrop = PendingDrop(id: d.id, name: d.name, option: option)
-            } else if d.minute != d.bands.current {
-                Haptics.warning()
-            }
-            drag = nil
-        }
-    }
-
-    private func greenBand(safe: ClosedRange<Int>, current: Int) -> some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Theme.greenTint.opacity(0.7))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.greenDot, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-            }
-            .overlay(alignment: .topLeading) {
-                Text("Safe to drop · \(ScheduleEngine.clock(safe.lowerBound)) to \(ScheduleEngine.clock(safe.upperBound))")
-                    .font(.system(size: 13, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.greenText)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text("Was \(ScheduleEngine.clock(current))")
-                    .font(.system(size: 13))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.greenText)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
-            .accessibilityIdentifier("safe-band")
-    }
-
-    private func terraBand(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            Circle().fill(Theme.terraDot).frame(width: 7, height: 7)
-            Text(text)
-                .font(.system(size: 13))
-                .monospacedDigit()
-                .foregroundStyle(Theme.terraText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .frame(minHeight: Self.bandHeight)
-        .background(Theme.terraTint, in: .rect(cornerRadius: 14, style: .continuous))
-    }
-
-    // MARK: Drop bar
-
-    private var justLabel: String {
-        PregnancyMath.calendar.isDateInToday(day) ? "Just today" : "Just \(day.formatted(.dateTime.weekday(.wide)))"
-    }
-
-    private func dropBar(_ p: PendingDrop) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(Text(p.name).bold()) moves to \(Text(ScheduleEngine.clock(p.option.minutes)).bold())")
-                    .font(.system(size: 17))
-                    .foregroundStyle(Theme.dayText)
-                    .monospacedDigit()
-                if !p.option.alongside.isEmpty {
-                    Text(p.option.alongside.map { "\($0.name) to \(ScheduleEngine.clock($0.minutes))" }.joined(separator: " · "))
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.daySecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+    /// The dimmed layer and the card, centred in the pane that holds the list.
+    @ViewBuilder
+    private var moveLayer: some View {
+        if let request = movePopup {
+            ZStack {
+                Color.black.opacity(0.32)
+                    .ignoresSafeArea()
+                    .onTapGesture { closeMove() }
+                    .accessibilityLabel("Cancel move")
+                    .accessibilityAddTraits(.isButton)
+                MovePopup(request: request, onCancel: closeMove) { moved in
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                        var marks = changed
+                        for (k, v) in moved where marks[k] == nil { marks[k] = v }
+                        changed = marks
+                        movePopup = nil
+                    }
                 }
+                .id(request.id)
             }
-            HStack(spacing: 10) {
-                Button(justLabel) { commitDrop(p, scope: .today) }
-                    .buttonStyle(BloomPrimaryButtonStyle())
-                    .accessibilityIdentifier("drop-just-today")
-                Button("Every day") { commitDrop(p, scope: .forward) }
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.rose)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 50)
-                    .background(Theme.roseTint, in: .capsule)
-                    .buttonStyle(PressableStyle())
-                    .accessibilityIdentifier("drop-every-day")
-                Button("Undo") {
-                    Haptics.tap()
-                    pendingDrop = nil
-                }
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(Theme.daySecondary)
-                .frame(minWidth: 56, minHeight: 50)
-                .buttonStyle(PressableStyle())
-                .accessibilityIdentifier("drop-undo")
-            }
+            .transition(.opacity)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.dayCard, in: .rect(cornerRadius: Theme.dayRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.dayRadius, style: .continuous).stroke(Theme.dayDivider, lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 16, y: -2)
-        .padding(.horizontal, DayList.side)
-        .padding(.bottom, 8)
     }
 
-    private func commitDrop(_ p: PendingDrop, scope: ScheduleChange.Scope) {
-        let old = store.dayState(owner, on: day)?.times ?? [:]
-        store.applyMove(owner: owner, day: day, option: p.option, medicationID: p.id, scope: scope)
-        Haptics.success()
-        var marks = changed
-        for id in [p.id] + p.option.alongside.map(\.id) {
-            if let m = old[id] { marks[id] = marks[id] ?? m }
-        }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
-            changed = marks
-            pendingDrop = nil
-        }
+    private func closeMove() {
+        withAnimation(.easeOut(duration: 0.2)) { movePopup = nil }
     }
 
     // MARK: Editor

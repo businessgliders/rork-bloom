@@ -101,6 +101,8 @@ struct WeekSheetItem: Identifiable {
 struct MilestoneEditorItem: Identifiable {
     let id = UUID()
     let milestone: Milestone?
+    /// For a new milestone: pre-fills the date ("Add a moment to Month N").
+    var defaultDate: Date? = nil
 }
 
 // MARK: - Hero

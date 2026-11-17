@@ -233,7 +233,7 @@ struct DayDivider: View {
 }
 
 /// The row above the week strip: "2-day streak" left, a monotone 14-day bar chart right.
-/// Bar height = share taken, a day with a miss at 35%, future days as 2 pt stubs, today outlined.
+/// Bar height = share taken, a day with a miss at 35%, the last 14 days ending today, today outlined.
 /// Opens How it's going, which shows the same chart larger.
 struct StreakChart: View {
     var days: Int

@@ -12,9 +12,9 @@ struct MilestoneEditorView: View {
     @State private var photoChanged = false
     @State private var confirmDelete = false
 
-    init(milestone: Milestone?) {
+    init(milestone: Milestone?, defaultDate: Date? = nil) {
         original = milestone
-        _draft = State(initialValue: milestone ?? Milestone(title: "", type: .personal, date: .now))
+        _draft = State(initialValue: milestone ?? Milestone(title: "", type: .personal, date: defaultDate ?? .now))
         if let filename = milestone?.photoFilename {
             _photo = State(initialValue: PhotoStore.image(filename))
         }
