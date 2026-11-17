@@ -473,7 +473,13 @@ extension AppStore {
                 let dayRows = doseDays[dateKey] ?? []
                 let routine = routineDays[dateKey]
                 var times: [UUID: DoseTime] = [:]
-                for row in dayRows { times[row.medication_id] = DoseTime(date: row.scheduled_for) }
+                var adjusted: [UUID: MealAdjust] = [:]
+                for row in dayRows {
+                    times[row.medication_id] = DoseTime(date: row.scheduled_for)
+                    if row.source == "meal_adjust", let code = row.meal_reason, let adjust = MealAdjust(code: code) {
+                        adjusted[row.medication_id] = adjust
+                    }
+                }
                 let existing = overrides.first { $0.owner == owner && PregnancyMath.calendar.isDate($0.date, inSameDayAs: date) }
                 // Day-only wake, bed and meals come from `day_routines`, shared by both phones.
                 let meals = routine?.meals?.map {
@@ -484,7 +490,8 @@ extension AppStore {
                                                 date: date, times: times,
                                                 templateID: dayRows.first?.template_id ?? routine?.template_id,
                                                 meals: meals, wake: routine?.wake_time.map(SyncFormat.time(from:)),
-                                                bed: routine?.bed_time.map(SyncFormat.time(from:))))
+                                                bed: routine?.bed_time.map(SyncFormat.time(from:)),
+                                                adjusted: adjusted.isEmpty ? nil : adjusted))
             }
         }
         newOverrides.sort { ($0.date, $0.owner.rawValue) < ($1.date, $1.owner.rawValue) }
@@ -492,7 +499,7 @@ extension AppStore {
         // Keep local ids/order stable so an unchanged pull doesn't look like a change.
         // Same content (ids aside) means nothing changed.
         let unchanged = newOverrides.count == currentOverrides.count && zip(newOverrides, currentOverrides).allSatisfy { n, c in
-            n.times == c.times && n.meals == c.meals && n.wake == c.wake && n.bed == c.bed
+            n.times == c.times && n.meals == c.meals && n.wake == c.wake && n.bed == c.bed && n.adjusted == c.adjusted
         }
         let overridesOut = unchanged
             ? overrides : newOverrides

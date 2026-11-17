@@ -36,7 +36,7 @@ nonisolated struct SyncAccount: Codable, Equatable {
 nonisolated struct SyncOp: Codable, Equatable {
     nonisolated enum Kind: String, Codable, CaseIterable {
         // Order = flush order: templates and rules need their medications on the server first.
-        case profile, medication, template, rule, plan, follow, milestone, dose, medText
+        case profile, medication, template, rule, plan, follow, milestone, dose, medText, meal
 
         var order: Int { Kind.allCases.firstIndex(of: self) ?? 0 }
     }
@@ -190,6 +190,20 @@ nonisolated struct RemotePlannedDoseRow: Decodable {
     var scheduled_for: Date
     var source: String
     var template_id: UUID?
+    /// `meal_adjust` rows: "reason:meal:from".
+    var meal_reason: String?
+}
+
+/// `meal_logs`: a meal checked off on Meds today. `eaten_at` is when the meal ended.
+nonisolated struct RemoteMealLogRow: Decodable {
+    var id: UUID
+    var taker_id: UUID
+    var local_date: String
+    var meal: String
+    var planned_at: Date?
+    var eaten_at: Date
+    var logged_by: UUID?
+    var updated_at: Date?
 }
 
 /// `day_routines`: one person's own wake, bed and meals for one day ("Just today").

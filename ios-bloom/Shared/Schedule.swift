@@ -151,6 +151,9 @@ nonisolated struct DayOverride: Codable, Identifiable, Equatable {
     var meals: [ScheduleMeal]?
     var wake: DoseTime?
     var bed: DoseTime?
+    /// Doses that moved today because of a meal she logged (followed it, or she accepted the fix).
+    /// Synced as `planned_doses.source = meal_adjust` with `meal_reason`.
+    var adjusted: [UUID: MealAdjust]?
 }
 
 nonisolated enum PlanDay {

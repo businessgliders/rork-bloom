@@ -38,6 +38,9 @@ struct DayRow<Trailing: View>: View {
     var timeNote: String? = nil
     /// Flip to bounce the dot once (a dose taken or undone).
     var dotBounce = false
+    /// A small line under the name ("Eaten 9:40 AM", "Follows dinner").
+    var subtitle: String? = nil
+    var subtitleColor: Color? = nil
     @ViewBuilder var trailing: Trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -103,7 +106,18 @@ struct DayRow<Trailing: View>: View {
 
     @ViewBuilder
     private var nameView: some View {
-        let label = FittingName(name: name, color: nameColor ?? (muted ? Theme.dayMuted : Theme.dayText))
+        let label = VStack(alignment: .leading, spacing: 2) {
+            FittingName(name: name, color: nameColor ?? (muted ? Theme.dayMuted : Theme.dayText))
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .foregroundStyle(subtitleColor ?? Theme.daySecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
+        }
+            .padding(.vertical, subtitle == nil ? 0 : 6)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(.rect)
         if let nameAction {
@@ -148,9 +162,11 @@ private struct FittingName: View {
 
 extension DayRow where Trailing == EmptyView {
     init(time: String, dot: Color, name: String, muted: Bool = false, timeColor: Color? = nil, nameColor: Color? = nil,
-         timeAction: (() -> Void)? = nil, nameAction: (() -> Void)? = nil, identifier: String = "", timeNote: String? = nil) {
+         timeAction: (() -> Void)? = nil, nameAction: (() -> Void)? = nil, identifier: String = "", timeNote: String? = nil,
+         subtitle: String? = nil, subtitleColor: Color? = nil) {
         self.init(time: time, dot: dot, name: name, muted: muted, timeColor: timeColor, nameColor: nameColor,
-                  timeAction: timeAction, nameAction: nameAction, identifier: identifier, timeNote: timeNote) { EmptyView() }
+                  timeAction: timeAction, nameAction: nameAction, identifier: identifier, timeNote: timeNote,
+                  subtitle: subtitle, subtitleColor: subtitleColor) { EmptyView() }
     }
 }
 

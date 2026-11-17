@@ -3,22 +3,36 @@ import SwiftUI
 /// Board 18: the small menu anchored to a check circle when the dose is logged away from its planned time.
 /// "On time" (planned, rose tint, first) · "Just now" · "Another time…" (inline full-day wheel with its own confirm).
 /// Tapping outside cancels. A quiet "Skip today" sits at the bottom.
+/// Board 20: the same menu logs a meal (planned = the meal's end, no skip).
 struct TakenTimeMenu: View {
-    var instance: DoseInstance
+    var planned: Date
     var question: String
+    var wheelLabel: String = "Taken at"
     var onPick: (Date) -> Void
-    var onSkip: () -> Void
+    var onSkip: (() -> Void)?
+
+    init(planned: Date, question: String, wheelLabel: String = "Taken at", onPick: @escaping (Date) -> Void, onSkip: (() -> Void)? = nil) {
+        self.planned = planned
+        self.question = question
+        self.wheelLabel = wheelLabel
+        self.onPick = onPick
+        self.onSkip = onSkip
+    }
+
+    init(instance: DoseInstance, question: String, onPick: @escaping (Date) -> Void, onSkip: @escaping () -> Void) {
+        self.init(planned: instance.scheduledAt, question: question, onPick: onPick, onSkip: onSkip)
+    }
 
     @State private var another = false
     @State private var time: Date = .now
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var cal: Calendar { PregnancyMath.calendar }
-    private var isToday: Bool { cal.isDate(instance.scheduledAt, inSameDayAs: .now) }
+    private var isToday: Bool { cal.isDate(planned, inSameDayAs: .now) }
 
     /// Start of that day up to now (or the end of that day for a past day).
     private var range: ClosedRange<Date> {
-        let start = cal.startOfDay(for: instance.scheduledAt)
+        let start = cal.startOfDay(for: planned)
         let end = max(start, min(Date.now, PregnancyMath.addDays(1, to: start).addingTimeInterval(-60)))
         return start...end
     }
@@ -33,9 +47,9 @@ struct TakenTimeMenu: View {
                 .padding(.bottom, 8)
 
             VStack(spacing: 4) {
-                if instance.scheduledAt <= .now {
-                    option(title: "On time", detail: "\(DayList.clock(instance.scheduledAt)), as planned",
-                           highlighted: true, id: "taken-on-time") { onPick(instance.scheduledAt) }
+                if planned <= .now {
+                    option(title: "On time", detail: "\(DayList.clock(planned)), as planned",
+                           highlighted: true, id: "taken-on-time") { onPick(planned) }
                 }
                 if isToday {
                     option(title: "Just now", detail: DayList.clock(.now), highlighted: false, id: "taken-just-now") {
@@ -44,14 +58,14 @@ struct TakenTimeMenu: View {
                 }
                 option(title: "Another time\u{2026}", detail: nil, highlighted: another, id: "taken-another") {
                     Haptics.select()
-                    time = min(max(instance.scheduledAt, range.lowerBound), range.upperBound)
+                    time = min(max(planned, range.lowerBound), range.upperBound)
                     withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.88)) {
                         another.toggle()
                     }
                 }
                 if another {
                     VStack(spacing: 6) {
-                        DatePicker("Taken at", selection: $time, in: range, displayedComponents: .hourAndMinute)
+                        DatePicker(wheelLabel, selection: $time, in: range, displayedComponents: .hourAndMinute)
                             .datePickerStyle(.wheel)
                             .labelsHidden()
                             .frame(height: 130)
@@ -73,18 +87,22 @@ struct TakenTimeMenu: View {
             }
             .padding(.horizontal, 6)
 
-            Rectangle().fill(Theme.dayDivider).frame(height: 1).padding(.top, 8)
-            Button {
-                onSkip()
-            } label: {
-                Text("Skip today")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.daySecondary)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(.rect)
+            if let onSkip {
+                Rectangle().fill(Theme.dayDivider).frame(height: 1).padding(.top, 8)
+                Button {
+                    onSkip()
+                } label: {
+                    Text("Skip today")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.daySecondary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityIdentifier("taken-skip")
+            } else {
+                Spacer().frame(height: 8)
             }
-            .buttonStyle(PressableStyle())
-            .accessibilityIdentifier("taken-skip")
         }
         .frame(width: 264)
         .background(Theme.dayCard)

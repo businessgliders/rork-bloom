@@ -54,6 +54,8 @@ struct PersistedState: Codable {
     var overrides: [DayOverride] = []
     // v6: "Your meds & rules" exactly as typed, per person (owner raw value). Kept on this phone only.
     var medsText: [String: String] = [:]
+    // v7: meals checked off on Meds today (last few days)
+    var mealLogs: [MealLog] = []
 
     init(
         profile: PregnancyProfile?,
@@ -76,10 +78,12 @@ struct PersistedState: Codable {
         templates: [ScheduleTemplate] = [],
         rules: [ScheduleRule] = [],
         overrides: [DayOverride] = [],
-        medsText: [String: String] = [:]
+        medsText: [String: String] = [:],
+        mealLogs: [MealLog] = []
     ) {
-        self.version = 6
+        self.version = 7
         self.medsText = medsText
+        self.mealLogs = mealLogs
         self.templates = templates
         self.rules = rules
         self.overrides = overrides
@@ -127,6 +131,7 @@ struct PersistedState: Codable {
         rules = (try? c.decodeIfPresent([ScheduleRule].self, forKey: .rules)) ?? []
         overrides = (try? c.decodeIfPresent([DayOverride].self, forKey: .overrides)) ?? []
         medsText = (try? c.decodeIfPresent([String: String].self, forKey: .medsText)) ?? [:]
+        mealLogs = (try? c.decodeIfPresent([MealLog].self, forKey: .mealLogs)) ?? []
     }
 }
 
@@ -159,6 +164,8 @@ struct RemoteState {
     var dayRoutines: [RemoteDayRoutineRow] = []
     /// "My rules" texts as typed (`med_texts`), one per person.
     var medTexts: [RemoteMedTextRow] = []
+    /// Meals checked off (`meal_logs`) from yesterday on.
+    var mealLogs: [RemoteMealLogRow] = []
 }
 
 /// Lets the user reverse the last dose action from a toast.
@@ -199,6 +206,10 @@ final class AppStore {
     var overrides: [DayOverride] = []
     /// "Your meds & rules" exactly as typed, per person (edited from AppStore+MedsText.swift).
     var medsText: [MedOwner: String] = [:]
+    /// Meals checked off on Meds today (edited from AppStore+Meals.swift).
+    var mealLogs: [MealLog] = []
+    /// No-food clashes waiting for Move / Keep on this phone.
+    var mealClashes: [MedOwner: [MealClash]] = [:]
     /// Set after a dose is taken off-schedule; Today asks "Just today" or "Update my template".
     var scheduleChange: ScheduleChange?
     /// She left Meds today with a "Shift my day" not saved: the tab bar asks Just today / Every day.
@@ -772,6 +783,8 @@ final class AppStore {
         templates = []
         rules = []
         overrides = []
+        mealLogs = []
+        mealClashes = [:]
         scheduleChange = nil
         followModes = [:]
         pendingOps = []
@@ -912,10 +925,12 @@ final class AppStore {
 
         let schedule = mergeRemoteSchedules(remote, medIDs: medIDs)
         let textsChanged = mergeRemoteMedTexts(remote)
+        let newMealLogs = mergeRemoteMealLogs(remote)
 
         let changed = textsChanged || accountChanged || newProfile != profile || newMilestones != milestones || newMeds != medications
             || newFollows != followModes || newLogs.sorted(by: Self.logOrder) != doseLogs.sorted(by: Self.logOrder) || !onboardingComplete
             || schedule.templates != templates || schedule.rules != rules || schedule.overrides != overrides
+            || newMealLogs != mealLogs.sorted(by: Self.mealOrder)
         guard changed else { return }
         profile = newProfile
         milestones = newMilestones
@@ -925,7 +940,9 @@ final class AppStore {
         templates = schedule.templates
         rules = schedule.rules
         overrides = schedule.overrides
+        mealLogs = newMealLogs
         rebuildPlan()
+        replanOwnMealsAfterPull()
         if newProfile != nil {
             onboardingComplete = true
             disclaimerAccepted = true
@@ -1064,7 +1081,8 @@ final class AppStore {
             templates: templates,
             rules: rules,
             overrides: overrides,
-            medsText: Dictionary(uniqueKeysWithValues: medsText.map { ($0.key.rawValue, $0.value) })
+            medsText: Dictionary(uniqueKeysWithValues: medsText.map { ($0.key.rawValue, $0.value) }),
+            mealLogs: mealLogs
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -1096,6 +1114,8 @@ final class AppStore {
         rules = []
         overrides = []
         medsText = [:]
+        mealLogs = []
+        mealClashes = [:]
         scheduleChange = nil
         aiLookupConsent = nil
         celebration = nil
@@ -1155,10 +1175,12 @@ final class AppStore {
         rules = state.rules
         overrides = state.overrides
         medsText = Dictionary(uniqueKeysWithValues: state.medsText.compactMap { key, value in MedOwner(rawValue: key).map { ($0, value) } })
+        mealLogs = state.mealLogs
     }
 
     /// The one place med changes fan out: file, notifications, widgets, Live Activity, Reminders.
     func saveAndReschedule(syncReminders: Bool = true) {
+        refreshMealClashes()
         save()
         MedNotifications.reschedule(store: self)
         LiveActivityController.sync(store: self)
@@ -1196,7 +1218,8 @@ final class AppStore {
             templates: templates,
             rules: rules,
             overrides: overrides,
-            medsText: Dictionary(uniqueKeysWithValues: medsText.map { ($0.key.rawValue, $0.value) })
+            medsText: Dictionary(uniqueKeysWithValues: medsText.map { ($0.key.rawValue, $0.value) }),
+            mealLogs: mealLogs
         )
         guard let data = try? Self.encoder.encode(state) else { return }
         SharedStateFile.write(data)

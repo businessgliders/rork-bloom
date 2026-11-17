@@ -170,6 +170,85 @@ export type Database = {
           },
         ]
       }
+      meal_logs: {
+        Row: {
+          created_at: string
+          eaten_at: string
+          id: string
+          local_date: string
+          logged_by: string | null
+          meal: string
+          planned_at: string | null
+          pregnancy_id: string
+          taker_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          eaten_at: string
+          id?: string
+          local_date: string
+          logged_by?: string | null
+          meal: string
+          planned_at?: string | null
+          pregnancy_id: string
+          taker_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          eaten_at?: string
+          id?: string
+          local_date?: string
+          logged_by?: string | null
+          meal?: string
+          planned_at?: string | null
+          pregnancy_id?: string
+          taker_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meal_logs_pregnancy_id_fkey"
+            columns: ["pregnancy_id"]
+            isOneToOne: false
+            referencedRelation: "pregnancies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      med_texts: {
+        Row: {
+          pregnancy_id: string
+          taker_id: string
+          text: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          pregnancy_id: string
+          taker_id: string
+          text?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          pregnancy_id?: string
+          taker_id?: string
+          text?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "med_texts_pregnancy_id_fkey"
+            columns: ["pregnancy_id"]
+            isOneToOne: false
+            referencedRelation: "pregnancies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       medication_follows: {
         Row: {
           medication_id: string
@@ -351,11 +430,53 @@ export type Database = {
           },
         ]
       }
+      notification_prefs: {
+        Row: {
+          daily_note: boolean
+          include_recap: boolean
+          note_time: string
+          partner_alerts: boolean
+          pregnancy_id: string | null
+          share_recap_with_partner: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          daily_note?: boolean
+          include_recap?: boolean
+          note_time?: string
+          partner_alerts?: boolean
+          pregnancy_id?: string | null
+          share_recap_with_partner?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          daily_note?: boolean
+          include_recap?: boolean
+          note_time?: string
+          partner_alerts?: boolean
+          pregnancy_id?: string | null
+          share_recap_with_partner?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_prefs_pregnancy_id_fkey"
+            columns: ["pregnancy_id"]
+            isOneToOne: false
+            referencedRelation: "pregnancies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       planned_doses: {
         Row: {
           created_at: string
           id: string
           local_date: string
+          meal_reason: string | null
           medication_id: string
           no_food_after_min: number
           no_food_before_min: number
@@ -370,6 +491,7 @@ export type Database = {
           created_at?: string
           id?: string
           local_date: string
+          meal_reason?: string | null
           medication_id: string
           no_food_after_min?: number
           no_food_before_min?: number
@@ -384,6 +506,7 @@ export type Database = {
           created_at?: string
           id?: string
           local_date?: string
+          meal_reason?: string | null
           medication_id?: string
           no_food_after_min?: number
           no_food_before_min?: number

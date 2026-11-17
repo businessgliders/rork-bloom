@@ -165,6 +165,19 @@ struct MedsTodayList: View {
                         .onChange(of: doseMove.wheel) { _, open in if open { revealInScroll?(Self.doseMoveScrollID) } }
                         .onChange(of: doseMove.check != nil) { _, shown in if shown { revealInScroll?(Self.doseMoveScrollID) } }
                 }
+                if case .meal(let meal, _) = entry {
+                    ForEach(clashes(for: meal), id: \.id) { clash in
+                        MealClashCard(
+                            clash: clash,
+                            medicationName: store.medicationNames[clash.medicationID] ?? "Medication",
+                            onMove: { store.acceptMealClash(clash, owner: owner) },
+                            onKeep: { store.keepMealClash(clash) }
+                        )
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
                 if let panel, panel.0 == entry.id {
                     ScheduleChangePanel(change: panel.1)
                         .padding(.horizontal, 10)
@@ -183,6 +196,8 @@ struct MedsTodayList: View {
         .onDisappear { settle?.cancel() }
         .animation(.easeOut(duration: 0.2), value: picker?.time)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.scheduleChange?.id)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.85),
+                   value: store.mealClashes[owner]?.map(\.id) ?? [])
         .accessibilityIdentifier("meds-day-list")
         .onAppear {
             // Rows fade and rise once per launch, not on every tab switch.
@@ -224,11 +239,17 @@ struct MedsTodayList: View {
                 .accessibilityIdentifier("today-nofood")
         case .meal(let meal, let start):
             let movable = canMove(meal, start: start)
+            let log = mealLogFor(meal)
             DayRow(time: DayList.clock(start), dot: Theme.greenDot, name: meal.name,
-                   muted: now.map { start < $0 } ?? false,
+                   muted: log == nil && (now.map { start < $0 } ?? false),
                    timeColor: picker?.entryID == entry.id ? Theme.rose : nil,
-                   timeAction: movable ? { openMovePicker(entryID: entry.id, id: meal.id, owner: owner, isMeal: true, at: start) } : nil,
-                   identifier: "meal-\(meal.name)")
+                   timeAction: movable && log == nil ? { openMovePicker(entryID: entry.id, id: meal.id, owner: owner, isMeal: true, at: start) } : nil,
+                   identifier: "meal-\(meal.name)",
+                   subtitle: log.map { eatenCaption($0, meal: meal) },
+                   subtitleColor: Theme.greenText) {
+                if isCheckable(meal) { mealCheck(meal, log: log, entryID: entry.id) }
+            }
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("today-meal-\(meal.name)")
         case .now:
             NowRule()
@@ -262,7 +283,9 @@ struct MedsTodayList: View {
             timeAction: timeAction,
             nameAction: { Haptics.tap(); onOpenMedication(med) },
             identifier: med.shortName,
-            dotBounce: instance.isTaken
+            dotBounce: instance.isTaken,
+            subtitle: store.mealCaption(for: instance),
+            subtitleColor: Theme.daySecondary
         ) {
             if canLog { check(instance, entryID: entryID) }
         }
@@ -316,6 +339,79 @@ struct MedsTodayList: View {
             .accessibilityLabel("Mark \(med.shortName) taken")
             .accessibilityAction { openLogMenu(entryID) }
             .accessibilityIdentifier("today-check-\(med.shortName)")
+    }
+
+    // MARK: Meals (board 20)
+
+    private func isCheckable(_ meal: ScheduleMeal) -> Bool {
+        guard canLog, isToday else { return false }
+        return store.checkableMeals(owner, on: day)[MealKind.of(meal.name)]?.id == meal.id
+    }
+
+    private func mealLogFor(_ meal: ScheduleMeal) -> MealLog? {
+        guard isCheckable(meal) else { return nil }
+        return store.mealLog(owner, on: day, kind: MealKind.of(meal.name))
+    }
+
+    private func clashes(for meal: ScheduleMeal) -> [MealClash] {
+        guard isToday else { return [] }
+        return (store.mealClashes[owner] ?? []).filter { $0.meal == meal.name }
+    }
+
+    private func mealEnd(_ meal: ScheduleMeal) -> Date {
+        meal.time.date(on: day).addingTimeInterval(Double(meal.durationMinutes) * 60)
+    }
+
+    /// "Eaten 9:40 AM", or "Eaten 1:30 PM · planned 12:00" when it was more than 10 minutes off.
+    private func eatenCaption(_ log: MealLog, meal: ScheduleMeal) -> String {
+        let eaten = "Eaten \(DayList.clock(log.eatenAt))"
+        guard abs(log.eatenAt.timeIntervalSince(mealEnd(meal))) > 600 else { return eaten }
+        return "\(eaten) · planned \(shortClock(log.plannedAt ?? meal.time.date(on: day)))"
+    }
+
+    private func mealCheck(_ meal: ScheduleMeal, log: MealLog?, entryID: String) -> some View {
+        let menuID = "mealcheck-\(entryID)"
+        let isOpen = Binding(get: { logMenu == menuID }, set: { if !$0, logMenu == menuID { logMenu = nil } })
+        let planned = mealEnd(meal)
+        return MealCheckCircle(done: log != nil)
+            .scaleEffect(logMenu == menuID ? 0.9 : 1)
+            .animation(.snappy(duration: 0.18), value: logMenu == menuID)
+            .onTapGesture {
+                if log != nil {
+                    Haptics.select()
+                    store.undoMeal(meal, owner: owner, day: day)
+                } else if abs(Date.now.timeIntervalSince(planned)) <= 600 {
+                    Haptics.success()
+                    store.logMeal(meal, owner: owner, day: day, at: .now)
+                } else {
+                    openLogMenu(menuID)
+                }
+            }
+            .onLongPressGesture(minimumDuration: 0.4) { openLogMenu(menuID) }
+            .popover(isPresented: isOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                TakenTimeMenu(
+                    planned: planned,
+                    question: mealQuestion(meal),
+                    wheelLabel: "Finished at",
+                    onPick: { time in
+                        logMenu = nil
+                        Haptics.success()
+                        store.logMeal(meal, owner: owner, day: day, at: time)
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(log == nil ? "Mark \(meal.name) eaten" : "Undo \(meal.name)")
+            .accessibilityAction { if log == nil { openLogMenu(menuID) } else { store.undoMeal(meal, owner: owner, day: day) } }
+            .accessibilityIdentifier("meal-check-\(meal.name)")
+    }
+
+    private func mealQuestion(_ meal: ScheduleMeal) -> String {
+        let name = meal.name.lowercased()
+        if !store.isShared || owner == store.viewerRole { return "When did you finish \(name)?" }
+        return owner == .mom ? "When did she finish \(name)?" : "When did \(store.name(for: owner)) finish \(name)?"
     }
 
     private func openLogMenu(_ entryID: String) {

@@ -628,11 +628,14 @@ extension AppStore {
             times[id] = DoseTime(minutes: m)
         }
         let existing = override(for: change.owner, on: day)
+        // A dose she moved herself no longer follows a meal.
+        let adjusted = existing?.adjusted?.filter { times[$0.key] != nil && times[$0.key] == existing?.times[$0.key] }
         overrides.removeAll { $0.owner == change.owner && PregnancyMath.calendar.isDate($0.date, inSameDayAs: day) }
         overrides.append(DayOverride(
             id: existing?.id ?? UUID(), owner: change.owner, takerID: isShared ? memberID(for: change.owner) : nil,
             date: day, times: times, templateID: change.templateID,
-            meals: meals ?? existing?.meals, wake: wake ?? existing?.wake, bed: bed ?? existing?.bed
+            meals: meals ?? existing?.meals, wake: wake ?? existing?.wake, bed: bed ?? existing?.bed,
+            adjusted: (adjusted?.isEmpty ?? true) ? nil : adjusted
         ))
         enqueue(.plan, change.owner.rawValue)
     }

@@ -295,7 +295,7 @@ final class SyncEngine {
         let ch = Backend.client.channel("bloom-\(pregnancyID.uuidString.lowercased())")
         // Unfiltered: delete events can't be filtered and only carry the primary key. RLS limits rows to this pregnancy.
         for table in ["pregnancies", "pregnancy_members", "milestones", "medications", "dose_logs", "medication_follows",
-                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines", "med_texts"] {
+                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines", "med_texts", "meal_logs"] {
             let stream = ch.postgresChange(AnyAction.self, schema: "public", table: table)
             realtimeTasks.append(Task {
                 for await _ in stream { SyncEngine.shared.requestPull() }
@@ -377,8 +377,8 @@ final class SyncEngine {
         async let rules: [RemoteRuleRow] = client.from("schedule_rules").select()
             .eq("pregnancy_id", value: pid).execute().value
         async let overrides: [RemotePlannedDoseRow] = client.from("planned_doses")
-            .select("id, taker_id, medication_id, local_date, scheduled_for, source, template_id")
-            .eq("pregnancy_id", value: pid).eq("source", value: "override")
+            .select("id, taker_id, medication_id, local_date, scheduled_for, source, template_id, meal_reason")
+            .eq("pregnancy_id", value: pid).in("source", values: ["override", "meal_adjust"])
             .gte("local_date", value: SyncFormat.day(PregnancyMath.addDays(-1, to: .now))).execute().value
         async let dayRoutines: [RemoteDayRoutineRow] = client.from("day_routines")
             .select("id, taker_id, local_date, template_id, wake_time, bed_time, meals")
@@ -394,6 +394,12 @@ final class SyncEngine {
             dayRoutines: dayRoutines
         )
         remote.medTexts = medTexts
+        // Meals checked off on Meds today, from yesterday on.
+        let mealLogs: [RemoteMealLogRow]? = try? await client.from("meal_logs")
+            .select("id, taker_id, local_date, meal, planned_at, eaten_at, logged_by, updated_at")
+            .eq("pregnancy_id", value: pid)
+            .gte("local_date", value: SyncFormat.day(PregnancyMath.addDays(-1, to: .now))).execute().value
+        if let mealLogs { remote.mealLogs = mealLogs } else { remote.mealLogs = Self.localMealRows(store) }
         // A partner who just joined makes queued partner meds sendable.
         let hadPartner = store.account?.partnerJoined ?? false
         store.applyRemote(remote)
@@ -587,6 +593,35 @@ final class SyncEngine {
                 "updated_by": .string(account.userID.uuidString),
                 "updated_at": .string(SyncFormat.timestamp(store.medsTextEditedAt(owner) ?? .now)),
             ], onConflict: "pregnancy_id,taker_id").execute()
+
+        case .meal:
+            guard case let (owner, day, kind)? = SyncOp.parseMealKey(op.key) else { return }
+            guard let takerID = store.memberID(for: owner) else { throw Deferred() }
+            if let log = store.mealLog(owner, on: day, kind: kind) {
+                try await client.from("meal_logs").upsert([
+                    "id": AnyJSON.string(log.id.uuidString),
+                    "pregnancy_id": .string(pid.uuidString),
+                    "taker_id": .string(takerID.uuidString),
+                    "local_date": .string(SyncFormat.day(day)),
+                    "meal": .string(kind.rawValue),
+                    "planned_at": log.plannedAt.map { .string(SyncFormat.timestamp($0)) } ?? .null,
+                    "eaten_at": .string(SyncFormat.timestamp(log.eatenAt)),
+                    "logged_by": .string(account.userID.uuidString),
+                ], onConflict: "taker_id,local_date,meal").execute()
+            } else {
+                try await client.from("meal_logs").delete()
+                    .eq("taker_id", value: takerID).eq("local_date", value: SyncFormat.day(day))
+                    .eq("meal", value: kind.rawValue).execute()
+            }
+        }
+    }
+
+    /// If the meal table can't be read, keep what this phone has instead of clearing it.
+    private static func localMealRows(_ store: AppStore) -> [RemoteMealLogRow] {
+        store.mealLogs.compactMap { log in
+            guard let taker = store.memberID(for: log.owner) else { return nil }
+            return RemoteMealLogRow(id: log.id, taker_id: taker, local_date: SyncFormat.day(log.date), meal: log.kind.rawValue,
+                                    planned_at: log.plannedAt, eaten_at: log.eatenAt, logged_by: log.loggedBy, updated_at: log.updatedAt)
         }
     }
 
@@ -682,8 +717,9 @@ final class SyncEngine {
                     "scheduled_for": .string(SyncFormat.timestamp(at)),
                     "no_food_before_min": .integer(med.foodRule == .emptyStomach ? med.noFoodBeforeMinutes : 0),
                     "no_food_after_min": .integer(med.foodRule == .emptyStomach ? med.noFoodAfterMinutes : 0),
-                    "source": .string(override == nil ? "template" : "override"),
+                    "source": .string(override?.adjusted?[med.id] != nil ? "meal_adjust" : (override == nil ? "template" : "override")),
                     "template_id": templateID.map { .string($0.uuidString) } ?? .null,
+                    "meal_reason": override?.adjusted?[med.id].map { .string($0.code) } ?? .null,
                 ])
             }
         }
