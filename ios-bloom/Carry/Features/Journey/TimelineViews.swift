@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Model
 
-/// The nine months by week (month 1 also holds week 0; weeks 41–42 fold into month 9).
+/// The months by week (month 1 also holds week 0; weeks 41–42 are Month 10, shown only when used).
 struct TimelineMonth: Identifiable, Hashable {
     let number: Int
     let weeks: ClosedRange<Int>
@@ -17,14 +17,15 @@ struct TimelineMonth: Identifiable, Hashable {
         .init(number: 1, weeks: 1...4), .init(number: 2, weeks: 5...8), .init(number: 3, weeks: 9...13),
         .init(number: 4, weeks: 14...17), .init(number: 5, weeks: 18...22), .init(number: 6, weeks: 23...27),
         .init(number: 7, weeks: 28...31), .init(number: 8, weeks: 32...35), .init(number: 9, weeks: 36...40),
+        .init(number: 10, weeks: 41...42),
     ]
 
     static func number(forWeek week: Int) -> Int {
-        let clamped = min(max(week, 1), 40)
+        let clamped = min(max(week, 1), 42)
         return all.first { $0.weeks.contains(clamped) }?.number ?? 1
     }
 
-    static func month(_ n: Int) -> TimelineMonth { all[min(max(n, 1), 9) - 1] }
+    static func month(_ n: Int) -> TimelineMonth { all[min(max(n, 1), 10) - 1] }
 
     func start(_ profile: PregnancyProfile) -> Date {
         PregnancyMath.addDays(startWeek * 7, to: profile.gestationStart)
@@ -94,6 +95,11 @@ enum TimelineFormat {
     }
 
     static let pastBeige = Color(light: 0xD8C7B6, dark: 0x5C4C45)
+
+    /// "6 mm", "3.6 cm"
+    static func length(_ cm: Double) -> String {
+        cm < 1 ? "\(Int((cm * 10).rounded())) mm" : "\(cm.formatted(.number.precision(.fractionLength(0...1)))) cm"
+    }
 }
 
 enum TimelineMonthState { case past, current, future }
@@ -141,22 +147,22 @@ private struct TimelineAddMenu: View {
                 Label("Restore typical milestones", systemImage: "arrow.counterclockwise")
             }
         } label: {
-            Label("Add", systemImage: "plus")
+            RoundIconLabel(systemName: "plus", tint: Theme.rose)
         }
-        .tint(Theme.rose)
+        .accessibilityLabel("Add")
     }
 }
 
-/// Timeline (boards 12–15): the pregnancy arc, a pager of trimester cards with month tiles and Coming up.
-/// A month tile opens the month view (zoom on iOS 18). Open Duo: overview left, the selected month right.
+/// Timeline (boards 12b–15): the pregnancy arc, the T1/T2/T3 bar and a paging carousel of month cards.
+/// A month card opens the month view (zoom on iOS 18). Open Duo: overview left, the selected month right.
 struct TimelineTabView: View {
     @Environment(AppStore.self) private var store
     @State private var path: [Int] = []
     @State private var editing: MilestoneEditorItem?
     @State private var pendingDelete: Milestone?
     @State private var weekSheet: WeekSheetItem?
-    @State private var page: Int?
-    @State private var selectedMonth: Int?
+    /// The month centred in the carousel (and shown in the right pane on the open Duo).
+    @State private var monthPage: Int?
     @State private var appeared = false
     @Namespace private var zoom
 
@@ -168,12 +174,7 @@ struct TimelineTabView: View {
                 }
             }
             .navigationTitle("Timeline")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    TimelineAddMenu(editing: $editing)
-                        .accessibilityIdentifier("timeline-add")
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Int.self) { number in
                 if let profile = store.profile {
                     TimelineMonthPage(
@@ -206,6 +207,10 @@ struct TimelineTabView: View {
         }
         .onAppear {
             CelebratedMilestones.seedIfNeeded(store.sortedMilestones.filter { $0.isPast(store.now) })
+            // Every time the tab appears, the carousel opens on the current month.
+            if let profile = store.profile {
+                monthPage = TimelineMonth.number(forWeek: profile.progress(on: store.now).weeks)
+            }
         }
     }
 
@@ -215,28 +220,28 @@ struct TimelineTabView: View {
         let current = TimelineMonth.number(forWeek: age.weeks)
         AdaptiveColumns {
             PaneScroll(pane: .primary) {
-                overview(profile, age: age, highlight: selectedMonth ?? current) { n in
+                overview(profile, age: age) { n in
                     Haptics.select()
-                    withAnimation(.snappy) { selectedMonth = n }
+                    withAnimation(.snappy) { monthPage = n }
                 }
             }
             .accessibilityIdentifier("timeline-overview-pane")
         } secondary: {
             PaneScroll(pane: .secondary) {
                 TimelineMonthContent(
-                    month: TimelineMonth.month(selectedMonth ?? current),
+                    month: TimelineMonth.month(monthPage ?? current),
                     profile: profile,
                     onEdit: { editing = $0 },
                     onDelete: { pendingDelete = $0 },
                     onWeek: { weekSheet = WeekSheetItem(week: $0) }
                 )
-                .id(selectedMonth ?? current)
+                .id(monthPage ?? current)
                 .transition(.opacity)
             }
             .accessibilityIdentifier("timeline-month-pane")
         } compact: {
             PaneScroll {
-                overview(profile, age: age, highlight: current) { n in
+                overview(profile, age: age) { n in
                     Haptics.select()
                     path.append(n)
                 }
@@ -245,29 +250,41 @@ struct TimelineTabView: View {
         }
         .background(Theme.dayCanvas.ignoresSafeArea())
         .onAppear {
-            if page == nil { page = age.trimester }
+            if monthPage == nil { monthPage = current }
             appeared = true
         }
     }
 
     @ViewBuilder
-    private func overview(_ profile: PregnancyProfile, age: GestationalAge, highlight: Int,
+    private func overview(_ profile: PregnancyProfile, age: GestationalAge,
                           open: @escaping (Int) -> Void) -> some View {
+        let current = TimelineMonth.number(forWeek: age.weeks)
+        let selected = TimelineMonth.month(monthPage ?? current)
+        ScreenTitleRow(title: "Timeline") {
+            TimelineAddMenu(editing: $editing)
+                .accessibilityIdentifier("timeline-add")
+        }
+
         Text("\(age.daysToGoText) \u{00B7} due \(profile.dueDate.formatted(.dateTime.month(.abbreviated).day().year()))")
             .font(.system(size: 15, weight: .medium))
             .monospacedDigit()
             .foregroundStyle(Theme.daySecondary)
-            .padding(.top, -6)
+            .padding(.top, -8)
             .accessibilityIdentifier("timeline-subtitle")
 
-        PregnancyArcHero(age: age, content: WeekLibrary.week(age.contentWeek), selectedTrimester: page ?? age.trimester)
+        PregnancyArcHero(age: age, content: WeekLibrary.week(age.contentWeek), selectedTrimester: selected.trimester)
             .frame(maxWidth: .infinity)
+            .animation(.easeInOut(duration: 0.3), value: selected.trimester)
 
-        TrimesterPager(profile: profile, age: age, page: $page, highlightMonth: highlight,
-                       appeared: appeared, zoom: zoom, onOpenMonth: open)
+        TrimesterBar(age: age, selected: selected.trimester) { t in
+            guard let first = TimelineTrimester.all.first(where: { $0.number == t })?.months.first else { return }
+            Haptics.select()
+            withAnimation(.snappy) { monthPage = first }
+        }
+        .timelineRise(index: 1, appeared: appeared)
 
-        ComingUpSection(profile: profile) { editing = MilestoneEditorItem(milestone: $0) }
-            .timelineRise(index: 3, appeared: appeared)
+        MonthCarousel(profile: profile, age: age, page: $monthPage, zoom: zoom, onOpenMonth: open)
+            .timelineRise(index: 2, appeared: appeared)
     }
 }
 
@@ -474,216 +491,3 @@ private struct TodayDot: View {
     }
 }
 
-// MARK: - Trimester pager
-
-private struct TrimesterPager: View {
-    @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var profile: PregnancyProfile
-    var age: GestationalAge
-    @Binding var page: Int?
-    var highlightMonth: Int
-    var appeared: Bool
-    var zoom: Namespace.ID
-    var onOpenMonth: (Int) -> Void
-
-    var body: some View {
-        let counts = milestoneCounts
-        VStack(spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(Array(TimelineTrimester.all.enumerated()), id: \.element.id) { index, trimester in
-                        TrimesterCard(trimester: trimester, profile: profile, age: age, counts: counts,
-                                      highlightMonth: highlightMonth, zoom: zoom, onOpenMonth: onOpenMonth)
-                            .frame(width: 300)
-                            .scrollTransition(.interactive, axis: .horizontal) { card, phase in
-                                card
-                                    .scaleEffect(phase.isIdentity || reduceMotion ? 1 : 0.92)
-                                    .opacity(phase.isIdentity ? 1 : 0.55)
-                            }
-                            .timelineRise(index: index + 1, appeared: appeared)
-                            .id(trimester.number)
-                    }
-                }
-                .scrollTargetLayout()
-            }
-            .contentMargins(.horizontal, 20, for: .scrollContent)
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $page)
-            .padding(.horizontal, -20)
-            .onChange(of: page) { _, _ in Haptics.select() }
-            .accessibilityIdentifier("timeline-trimester-pager")
-
-            HStack(spacing: 7) {
-                ForEach(TimelineTrimester.all) { t in
-                    Circle()
-                        .fill(t.number == (page ?? age.trimester) ? Theme.rose : Theme.dayDivider)
-                        .frame(width: 7, height: 7)
-                }
-            }
-            .animation(.snappy, value: page)
-            .accessibilityHidden(true)
-        }
-        .animation(.easeInOut(duration: 0.3), value: page)
-    }
-
-    private var milestoneCounts: [Int: Int] {
-        var counts: [Int: Int] = [:]
-        for m in store.sortedMilestones {
-            counts[TimelineMonth.number(forWeek: TimelineFormat.week(of: m, profile)), default: 0] += 1
-        }
-        return counts
-    }
-}
-
-private struct TrimesterCard: View {
-    var trimester: TimelineTrimester
-    var profile: PregnancyProfile
-    var age: GestationalAge
-    var counts: [Int: Int]
-    var highlightMonth: Int
-    var zoom: Namespace.ID
-    var onOpenMonth: (Int) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("TRIMESTER \(trimester.number)")
-                    .font(.system(size: 12, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(Theme.rose)
-                Text(trimester.weeksLabel)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(Theme.dayText)
-                Text("\(trimester.name) \u{00B7} \(TimelineFormat.short(trimester.start(profile)))\u{2009}\u{2013}\u{2009}\(TimelineFormat.short(trimester.end(profile)))")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.daySecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.dayDivider)
-                    Capsule().fill(Theme.rose).frame(width: geo.size.width * trimester.progress(age))
-                }
-            }
-            .frame(height: 4)
-            .accessibilityLabel("\(Int(trimester.progress(age) * 100)) percent through")
-
-            HStack(spacing: 8) {
-                ForEach(trimester.months, id: \.self) { n in
-                    MonthTile(month: TimelineMonth.month(n), state: TimelineFormat.monthState(TimelineMonth.month(n), age: age),
-                              count: counts[n] ?? 0, highlighted: n == highlightMonth) {
-                        onOpenMonth(n)
-                    }
-                    .timelineZoomSource(n, in: zoom)
-                }
-            }
-
-            Text(trimester.note)
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.daySecondary)
-                .lineLimit(2, reservesSpace: true)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(18)
-        .background(Theme.dayCard, in: .rect(cornerRadius: 28, style: .continuous))
-        .accessibilityIdentifier("trimester-card-\(trimester.number)")
-    }
-}
-
-private struct MonthTile: View {
-    var month: TimelineMonth
-    var state: TimelineMonthState
-    var count: Int
-    var highlighted: Bool
-    var action: () -> Void
-
-    private var diameter: CGFloat { 6 + CGFloat(month.number - 1) * 34 / 8 }
-    private var color: Color {
-        switch state {
-        case .current: Theme.rose
-        case .past: TimelineFormat.pastBeige
-        case .future: Theme.dayDivider
-        }
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Circle()
-                    .fill(color)
-                    .frame(width: diameter, height: diameter)
-                    .frame(width: 42, height: 42)
-                Text("Month \(month.number)")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.dayText)
-                Text(month.shortWeeksLabel)
-                    .font(.system(size: 11))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.dayMuted)
-                HStack(spacing: 3) {
-                    ForEach(0..<min(count, 4), id: \.self) { _ in
-                        Circle().fill(Theme.rose).frame(width: 5, height: 5)
-                    }
-                }
-                .frame(height: 5)
-            }
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity)
-            .background(highlighted ? Theme.roseTint : Theme.creamBox, in: .rect(cornerRadius: 18, style: .continuous))
-            .overlay {
-                if highlighted {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.rose, lineWidth: 1.5)
-                }
-            }
-        }
-        .buttonStyle(PressableStyle())
-        .accessibilityLabel("Month \(month.number), weeks \(month.weeks.lowerBound) to \(month.weeks.upperBound), \(count) \(count == 1 ? "milestone" : "milestones")")
-        .accessibilityIdentifier("month-tile-\(month.number)")
-    }
-}
-
-// MARK: - Coming up
-
-private struct ComingUpSection: View {
-    @Environment(AppStore.self) private var store
-    var profile: PregnancyProfile
-    var onEdit: (Milestone) -> Void
-
-    var body: some View {
-        let next = Array(store.sortedMilestones.filter { !$0.isPast(store.now) }.prefix(2))
-        if !next.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("COMING UP")
-                    .font(.system(size: 13, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(Theme.dayMuted)
-                    .padding(.leading, 4)
-                DayCard {
-                    ForEach(Array(next.enumerated()), id: \.element.id) { index, milestone in
-                        if index > 0 { DayDivider() }
-                        DayRow(
-                            time: TimelineFormat.short(milestone.date),
-                            dot: Theme.rose,
-                            name: milestone.title,
-                            nameAction: { onEdit(milestone) },
-                            identifier: "coming-\(milestone.title)",
-                            timeNote: TimelineFormat.relative(milestone.date, now: store.now)
-                        ) {
-                            Button { onEdit(milestone) } label: {
-                                Image(systemName: "chevron.right")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(Theme.dayMuted)
-                                    .frame(width: 44, height: 44)
-                            }
-                            .accessibilityLabel("Edit \(milestone.title)")
-                        }
-                    }
-                }
-            }
-            .accessibilityIdentifier("timeline-coming-up")
-        }
-    }
-}

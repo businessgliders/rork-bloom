@@ -4,3 +4,4 @@ node_modules
 .rork
 .sim-shots/
 __pycache__/
+.qa-shots/

@@ -16,6 +16,7 @@ struct MedsRoutinesView: View {
     var onApplied: (() -> Void)? = nil
 
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
 
     @State private var text = ""
     @State private var loaded = false
@@ -70,6 +71,7 @@ struct MedsRoutinesView: View {
         let names = names(result)
         AdaptiveColumns {
             PaneScroll(pane: .primary, spacing: 14) {
+                titleRow
                 RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine, showTimeCards: !editing)
                 editorCard(names)
             }
@@ -83,6 +85,7 @@ struct MedsRoutinesView: View {
             .background(Theme.dayCanvas.ignoresSafeArea())
         } compact: {
             PaneScroll(spacing: 14) {
+                titleRow
                 RoutineHeader(owner: owner, selectedRoutine: $selectedRoutine, showTimeCards: !editing)
                 editorCard(names)
                 consentCard
@@ -98,21 +101,8 @@ struct MedsRoutinesView: View {
         .safeAreaInset(edge: .bottom) {
             if editorFocused { suggestionBar(names).duoBarClearance() }
         }
-        .navigationTitle(editing ? "My rules" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines"))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if editorFocused {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        Haptics.select()
-                        editor.dismiss()
-                    }
-                    .fontWeight(.semibold)
-                    .tint(Theme.rose)
-                    .accessibilityIdentifier("editor-done")
-                }
-            }
-        }
+        .navigationTitle(screenTitle)
+        .toolbar(.hidden, for: .navigationBar)
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: store.scheduleChange?.id)
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: editorFocused)
         .onAppear(perform: load)
@@ -135,6 +125,29 @@ struct MedsRoutinesView: View {
         }
     }
 
+
+    // MARK: Title
+
+    private var screenTitle: String {
+        editing ? "My rules" : (isViewer ? "Meds & routines" : "\(store.name(for: owner))'s meds & routines")
+    }
+
+    /// Back, the title and, while typing, Done on the right.
+    private var titleRow: some View {
+        ScreenTitleRow(title: screenTitle, onBack: { dismiss() }, backIdentifier: "routines-back") {
+            if editorFocused {
+                Button("Done") {
+                    Haptics.select()
+                    editor.dismiss()
+                }
+                .font(.system(size: 17, weight: .semibold))
+                .tint(Theme.rose)
+                .frame(minHeight: ScreenHeader.row)
+                .accessibilityIdentifier("editor-done")
+                .transition(.opacity)
+            }
+        }
+    }
 
     // MARK: Editor
 

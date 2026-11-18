@@ -49,6 +49,8 @@ struct MedsView: View {
             }
             .navigationTitle("Meds today")
             .toolbar(.hidden, for: .navigationBar)
+            .onAppear { DailyNoteCenter.shared.homeAppeared("meds") }
+            .onDisappear { DailyNoteCenter.shared.homeDisappeared("meds") }
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
                 case .schedule(let who):
@@ -191,7 +193,6 @@ struct MedsView: View {
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Theme.dayText)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .padding(.top, 6)
                     dayList(list)
                 }
                 .anchoredMenuHost()
@@ -230,9 +231,15 @@ struct MedsView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .accessibilityAddTraits(.isHeader)
+                if isToday, DailyNoteCenter.shared.todaysNote != nil {
+                    notePill
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
                 Spacer(minLength: 8)
                 schedulingLink
             }
+            .frame(minHeight: 44)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: DailyNoteCenter.shared.todaysNote?.id)
             if owner != store.viewerRole {
                 Text("\(store.name(for: owner))'s day")
                     .font(.system(size: 13))
@@ -245,7 +252,28 @@ struct MedsView: View {
             }
             .padding(.top, -10)
         }
-        .padding(.top, 8)
+    }
+
+    /// Reopens today's note (whole, without typing).
+    private var notePill: some View {
+        Button {
+            Haptics.tap()
+            DailyNoteCenter.shared.reopen()
+        } label: {
+            HStack(spacing: 5) {
+                CarryMark(size: 13)
+                Text("Note")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.rose)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Theme.dayCard, in: .capsule)
+            .shadow(color: .black.opacity(0.05), radius: 4, y: 1)
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("Today's note")
+        .accessibilityIdentifier("daily-note-pill")
     }
 
     private var title: String {

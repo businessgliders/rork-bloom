@@ -238,6 +238,7 @@ final class SyncEngine {
 
     private func detachLocally() {
         userID = nil
+        DailyNoteCenter.shared.signedOut()
         email = nil
         accountName = ""
         needsSetup = false
@@ -365,7 +366,7 @@ final class SyncEngine {
         let ch = Backend.client.channel("bloom-\(pregnancyID.uuidString.lowercased())")
         // Unfiltered: delete events can't be filtered and only carry the primary key. RLS limits rows to this pregnancy.
         for table in ["pregnancies", "pregnancy_members", "milestones", "medications", "dose_logs", "medication_follows",
-                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines", "med_texts", "meal_logs"] {
+                      "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines", "med_texts", "meal_logs", "daily_notes"] {
             let stream = ch.postgresChange(AnyAction.self, schema: "public", table: table)
             realtimeTasks.append(Task {
                 for await _ in stream {
@@ -509,6 +510,8 @@ final class SyncEngine {
         MedNotifications.reschedule(store: store)
         if !hadPartner, store.account?.partnerJoined == true { scheduleFlush() }
         lastError = nil
+        // Today's note (per person; RLS returns only her own row).
+        DailyNoteCenter.shared.fetch()
         await downloadMissingPhotos()
     }
 

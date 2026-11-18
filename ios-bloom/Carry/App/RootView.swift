@@ -11,6 +11,23 @@ struct RootView: View {
     @State private var showSplash = AppStore.shared.isOnboarded
     @State private var revealed = !AppStore.shared.isOnboarded
     @State private var permission = NotificationPermission.shared
+    @State private var notes = DailyNoteCenter.shared
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// The note waits for the no-food card, a celebration, the splash and the sync prompt.
+    private var notesReady: Bool {
+        store.isOnboarded && !showSplash && !showSyncPrompt
+    }
+
+    /// "Week 10, day 2 · about a strawberry"
+    private var noteSubtitle: String? {
+        guard let profile = store.profile else { return nil }
+        let age = profile.progress(on: store.now)
+        // "day 0" reads oddly on the first day of a week, so it's just "Week 10" then.
+        var text = age.days > 0 ? "Week \(age.weeks), day \(age.days)" : "Week \(age.weeks)"
+        if let content = WeekLibrary.week(age.contentWeek), content.week >= 3 { text += " \u{00B7} about \(content.size)" }
+        return text
+    }
 
     private var greetingName: String? {
         guard store.isSignedIn else { return nil }
@@ -52,6 +69,28 @@ struct RootView: View {
         }
         .animation(.easeOut(duration: 0.2), value: store.noFoodAlert?.id)
         .overlay {
+            // One popup at a time: the no-food card first, then today's note.
+            if let note = notes.presentation, notesReady, store.noFoodAlert == nil, store.celebration == nil {
+                GeometryReader { geo in
+                    // Open Duo: centred in the left pane.
+                    let twoPane = sizeClass == .regular && geo.size.width >= 800
+                    ZStack {
+                        Color.black.opacity(0.35)
+                            .ignoresSafeArea()
+                            .onTapGesture { notes.close() }
+                            .accessibilityHidden(true)
+                        DailyNoteCard(presentation: note, subtitle: noteSubtitle) { notes.close() }
+                            .id(note.id)
+                            .frame(width: twoPane ? geo.size.width / 2 : geo.size.width)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: twoPane ? .leading : .center)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.22), value: notes.presentation?.id)
+        .onChange(of: notesReady, initial: true) { _, ready in notes.rootReady = ready }
+        .overlay {
             if showSplash {
                 LaunchSplash(
                     greetingName: greetingName,
@@ -70,6 +109,7 @@ struct RootView: View {
         .task(id: sync.sessionRestored) {
             // Wait for the saved session so signed-in users never see the prompt.
             guard sync.sessionRestored else { return }
+            notes.didBecomeActive()
             // Let the launch splash finish first.
             while showSplash, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -97,6 +137,7 @@ struct RootView: View {
                 store.now = .now
                 store.refreshReminders()
                 sync.didBecomeActive()
+                notes.didBecomeActive()
                 Task { await checkNotifications() }
             case .background:
                 sync.didEnterBackground()

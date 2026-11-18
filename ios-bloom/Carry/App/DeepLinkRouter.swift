@@ -27,6 +27,15 @@ final class DeepLinkRouter {
             openMeds()
             AppStore.shared.showNoFoodAlertIfActive()
             return true
+        case "dailynote", "note":
+            DailyNoteCenter.shared.openFromNotification()
+            return true
+#if DEBUG
+        case "debug-note":
+            // Simulator testing: carry://debug-note (first open, types) or carry://debug-note?again=1.
+            DailyNoteCenter.shared.debugInsert(fresh: url.query?.contains("again") != true)
+            return true
+#endif
         default:
             return false
         }
@@ -39,6 +48,10 @@ final class DeepLinkRouter {
 
     /// Notification payloads: a `link` wins, else any dose-related `type` (or a local dose reminder).
     func handleNotification(_ info: [AnyHashable: Any]) {
+        if let type = (info["type"] as? String)?.lowercased(), type == "daily_note" {
+            DailyNoteCenter.shared.openFromNotification()
+            return
+        }
         if let link = info["link"] as? String, let url = URL(string: link), handle(url) { return }
         if let type = (info["type"] as? String)?.lowercased(), type.hasPrefix("dose") || type.contains("dose") {
             openMeds(); return

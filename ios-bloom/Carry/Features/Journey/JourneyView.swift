@@ -22,8 +22,14 @@ struct JourneyView: View {
                     // Wide, left pane: the ring, as large as the pane allows, centred.
                     hero(profile: profile, age: age, weekNumber: weekNumber, expanded: true)
                         .padding(.horizontal, 40)
-                        .padding(.vertical, 24)
+                        .padding(.top, ScreenHeader.top + ScreenHeader.row)
+                        .padding(.bottom, 24)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay(alignment: .topTrailing) {
+                            settingsButton
+                                .padding(.top, ScreenHeader.top)
+                                .padding(.trailing, 20)
+                        }
                 } secondary: {
                     // Wide, right pane: This week, scrolling on its own.
                     ScrollView {
@@ -38,9 +44,13 @@ struct JourneyView: View {
                     // Regular iPhones, Duo outer display, tall inner display.
                     ScrollView {
                         VStack(spacing: 28) {
+                            // The date caption sits on the 44 pt title row, the gear trailing on it.
                             hero(profile: profile, age: age, weekNumber: weekNumber, expanded: false)
+                                .padding(.top, 12)
+                                .overlay(alignment: .topTrailing) { settingsButton }
                             thisWeek(profile: profile, weekNumber: weekNumber)
                         }
+                        .padding(.top, ScreenHeader.top)
                         .padding(.horizontal, 20)
                         .padding(.bottom, 32)
                         .frame(maxWidth: 640)
@@ -48,17 +58,9 @@ struct JourneyView: View {
                     }
                     .background(BloomBackground())
                 }
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showSettings = true
-                        } label: {
-                            Label("Settings", systemImage: "gearshape.fill")
-                        }
-                        .tint(Theme.textSecondary)
-                    }
-                }
-                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbar(.hidden, for: .navigationBar)
+                .onAppear { DailyNoteCenter.shared.homeAppeared("journey") }
+                .onDisappear { DailyNoteCenter.shared.homeDisappeared("journey") }
                 .sheet(isPresented: $showDates) {
                     NavigationStack { EditDatesView() }
                 }
@@ -70,6 +72,18 @@ struct JourneyView: View {
                 }
             }
         }
+    }
+
+    private var settingsButton: some View {
+        Button {
+            Haptics.select()
+            showSettings = true
+        } label: {
+            RoundIconLabel(systemName: "gearshape.fill")
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("Settings")
+        .accessibilityIdentifier("journey-settings")
     }
 
     private func hero(profile: PregnancyProfile, age: GestationalAge, weekNumber: Int, expanded: Bool) -> some View {

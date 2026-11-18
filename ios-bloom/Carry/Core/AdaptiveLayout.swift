@@ -228,7 +228,9 @@ private struct DuoListClearanceBars: ViewModifier {
             // safeAreaInset bars already stop at the bar's safe-area edge; extra padding left a 72 pt gap.
             content
         } else if edge != nil, paneScroll {
-            content.contentMargins(.top, 80, for: .scrollContent)
+            // PaneScroll screens hide the navigation bar and draw their own title row, so nothing floats
+            // above them: content starts at the safe area + 16, like everywhere else.
+            content
         } else if let edge {
             let barSide: Edge.Set = edge == .trailing ? .trailing : .leading
             let otherSide: Edge.Set = edge == .trailing ? .leading : .trailing
@@ -258,7 +260,7 @@ struct PaneScroll<Content: View>: View {
             }
             .padding(.horizontal, horizontalPadding)
             .duoBarSideTrim(pane: pane)
-            .padding(.top, 8)
+            .padding(.top, ScreenHeader.top)
             .padding(.bottom, 24)
             // Not containerRelativeFrame: inside ArrangementView that resolves to the whole screen,
             // so each pane grew to 951 pt and the right one ran off the display.

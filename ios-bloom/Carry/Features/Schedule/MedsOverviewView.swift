@@ -7,6 +7,7 @@ import SwiftUI
 struct MedsOverviewView: View {
     var owner: MedOwner
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
 
     @State private var setup: Bool?
     @State private var selectedRoutine: UUID?
@@ -81,7 +82,7 @@ struct MedsOverviewView: View {
             .background(Theme.dayCanvas.ignoresSafeArea())
         } secondary: {
             PaneScroll(pane: .secondary, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center) {
                     Text(routine?.displayName ?? "Every day")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Theme.dayText)
@@ -89,6 +90,7 @@ struct MedsOverviewView: View {
                     Spacer(minLength: 8)
                     moveDayButton
                 }
+                .frame(minHeight: ScreenHeader.row)
                 shiftStrip
                 caption(showMoveDay: false)
                 list
@@ -109,10 +111,7 @@ struct MedsOverviewView: View {
         }
         .animation(.easeOut(duration: 0.25), value: movePopup?.id)
         .navigationTitle("Meds & routines")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) { Text("") }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
             if let toast {
                 DarkToast(message: toast, onAction: undoEditorChange, onExpire: {
@@ -151,15 +150,15 @@ struct MedsOverviewView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Meds & routines")
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(Theme.dayText)
-                .accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: 0) {
+            ScreenTitleRow(title: "Meds & routines", onBack: { dismiss() }, backIdentifier: "overview-back") {
+                EmptyView()
+            }
             if !isViewer {
                 Text("\(store.name(for: owner))'s plan")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.dayMuted)
+                    .padding(.leading, ScreenHeader.row + 10)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

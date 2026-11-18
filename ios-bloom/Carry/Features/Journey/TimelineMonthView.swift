@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Board 13 pushed from a month tile: back to the trimester, then the month content.
+/// Board 13 pushed from a month card: a round back button on the title row, then the month content.
 struct TimelineMonthPage: View {
     var month: TimelineMonth
     var profile: PregnancyProfile
@@ -9,31 +9,13 @@ struct TimelineMonthPage: View {
     var onWeek: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    private var trimesterName: String {
-        TimelineTrimester.all.first { $0.months.contains(month.number) }?.name ?? "Timeline"
-    }
-
     var body: some View {
         PaneScroll {
-            TimelineMonthContent(month: month, profile: profile, onEdit: onEdit, onDelete: onDelete, onWeek: onWeek)
+            TimelineMonthContent(month: month, profile: profile, onEdit: onEdit, onDelete: onDelete, onWeek: onWeek,
+                                 onBack: { dismiss() })
         }
         .background(Theme.dayCanvas.ignoresSafeArea())
-        .navigationBarBackButtonHidden()
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left").fontWeight(.semibold)
-                        Text(trimesterName)
-                    }
-                }
-                .tint(Theme.rose)
-                .accessibilityIdentifier("month-back")
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -46,6 +28,8 @@ struct TimelineMonthContent: View {
     var onEdit: (MilestoneEditorItem) -> Void
     var onDelete: (Milestone) -> Void
     var onWeek: (Int) -> Void
+    /// Pushed page only; the open Duo's right pane has no back.
+    var onBack: (() -> Void)? = nil
 
     var body: some View {
         let age = profile.progress(on: store.now)
@@ -73,11 +57,16 @@ struct TimelineMonthContent: View {
     private func header(age: GestationalAge) -> some View {
         let span = Double((month.weeks.upperBound + 1 - month.startWeek) * 7)
         let progress = min(1, max(0, Double(age.totalDays - month.startWeek * 7) / span))
-        return HStack(alignment: .top) {
+        return HStack(alignment: .top, spacing: 10) {
+            if let onBack {
+                RoundBackButton(identifier: "month-back", action: onBack)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Month \(month.number)")
                     .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(Theme.dayText)
+                    .frame(minHeight: ScreenHeader.row)
+                    .accessibilityAddTraits(.isHeader)
                 Text("\(month.weeksLabel) \u{00B7} \(month.datesLabel(profile))")
                     .font(.system(size: 15))
                     .monospacedDigit()
@@ -87,8 +76,6 @@ struct TimelineMonthContent: View {
             CarryMark(size: 34, progress: max(progress, 0.001), trackColor: Theme.dayDivider)
                 .padding(.top, 6)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
     }
 
     // MARK: Week strip
