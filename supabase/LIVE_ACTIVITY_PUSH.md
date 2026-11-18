@@ -213,11 +213,16 @@ Headers: `apns-push-type: alert`, `apns-topic: app.businessgliders.bloom`, `apns
   },
   "type": "dose_taken",
   "medication_id": "d5606a56-4ce4-4cc2-a45e-e34b3c063ff2",
+  "taker_id": "6f1c2a90-3b7e-4d55-9c1a-2e8f4b7d0a13",
   "pregnancy_id": "ab9f9e7d-f6c7-49a4-9d24-5dfe5e1afe4c"
 }
 ```
 
 The app refreshes its data when an alert arrives in the foreground. The extra keys
-(`type`, `medication_id`, `pregnancy_id`) are optional context; the app doesn't require them.
+(`type`, `medication_id`, `taker_id`, `pregnancy_id`) are optional context; the app doesn't require them.
+
+`taker_id` is the taker's user id (`medications.taken_by`). A tap opens Meds today on the taker's day
+(the Mine / partner switch moves to her). Without `taker_id` the app falls back to the taker of
+`medication_id`.
 
 Never include dose amounts or strengths in a push.

@@ -26,7 +26,8 @@ struct MedsView: View {
     private var isToday: Bool { cal.isDate(selectedDay, inSameDayAs: today) }
     private var isFuture: Bool { selectedDay > today }
 
-    private var owner: MedOwner { store.medsPerson }
+    /// The person switch's choice when both take meds; otherwise your meds (or her day if you take none).
+    private var owner: MedOwner { store.shownMedsPerson }
     private var meds: [Medication] { store.meds(of: owner) }
 
     private func instances(on day: Date) -> [DoseInstance] {
@@ -54,7 +55,7 @@ struct MedsView: View {
             .navigationDestination(for: MedsRoute.self) { route in
                 switch route {
                 case .schedule(let who):
-                    MedsOverviewView(owner: who)
+                    MedsOverviewView(owner: who, followsSelection: true)
                 case .rules(let who, let focus):
                     MedsRoutinesView(owner: who, editing: true, focusName: focus, onApplied: {
                         if !path.isEmpty { path.removeLast() }
@@ -143,6 +144,11 @@ struct MedsView: View {
     /// Meds today at the top level, on today, scrolled to the dose that matters now.
     private func openFromLink() {
         DeepLinkRouter.shared.pendingMeds = false
+        // The notification's person: her alerts and reminders open her day, yours open yours.
+        if let person = DeepLinkRouter.shared.pendingOwner {
+            DeepLinkRouter.shared.pendingOwner = nil
+            store.showMeds(of: person)
+        }
         sheetMed = nil
         showProgress = false
         showQuiz = false
@@ -193,6 +199,7 @@ struct MedsView: View {
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Theme.dayText)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .medsPersonSwipe()
                     dayList(list)
                 }
                 .anchoredMenuHost()
@@ -224,6 +231,8 @@ struct MedsView: View {
     /// "Meds today" + the streak summary line; Meds & routines sits top right.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
+          // Title and person switch: a sideways swipe here switches person (not over the streak row).
+          VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
                 Text(title)
                     .font(.system(size: 30, weight: .bold))
@@ -240,11 +249,16 @@ struct MedsView: View {
             }
             .frame(minHeight: 44)
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: DailyNoteCenter.shared.todaysNote?.id)
-            if owner != store.viewerRole {
+            if store.bothTakeMeds {
+                MedsPersonSwitch()
+            } else if owner != store.viewerRole {
                 Text("\(store.name(for: owner))'s day")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.dayMuted)
             }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .medsPersonSwipe()
             StreakChart(days: store.streak(owner).current, bars: store.streakBars(owner),
                         paused: store.celebration != nil) {
                 Haptics.tap()
@@ -437,7 +451,8 @@ struct MedsView: View {
 
     @ViewBuilder
     private func dayList(_ list: [DoseInstance]) -> some View {
-        if !store.hasRoutine(owner) {
+        // Only the person themselves plans their day (the partner's rules are read-only).
+        if !store.hasRoutine(owner), !store.isShared || owner == store.viewerRole {
             routinePrompt
         }
         MedsTodayList(

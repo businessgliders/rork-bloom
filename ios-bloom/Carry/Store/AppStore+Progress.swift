@@ -30,6 +30,24 @@ extension AppStore {
         return me
     }
 
+    /// Both people have medications that haven't ended: Meds shows the Mine / partner switch.
+    var bothTakeMeds: Bool {
+        MedOwner.allCases.allSatisfy { !currentMedications(for: $0).isEmpty }
+    }
+
+    /// The person Meds today and Meds & routines show: the switch when both take meds, else `medsPerson`.
+    var shownMedsPerson: MedOwner {
+        guard bothTakeMeds else { return medsPerson }
+        return medsShowsPartner ? viewerRole.other : viewerRole
+    }
+
+    /// Points the person switch at `owner` (a deep link or a swipe). No-op without the switch.
+    func showMeds(of owner: MedOwner) {
+        guard bothTakeMeds else { return }
+        let partner = owner != viewerRole
+        if medsShowsPartner != partner { medsShowsPartner = partner }
+    }
+
     func meds(of owner: MedOwner) -> [Medication] {
         medications.filter { $0.owner == owner }
     }

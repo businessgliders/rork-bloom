@@ -225,6 +225,10 @@ final class AppStore {
     var noFoodAlert: NoFoodAlert?
     /// "Eaten" was pressed on the Live Activity during a no-food window: Meds today asks first.
     var pendingMealGuard: MealGuardRequest?
+    /// Meds today / Meds & routines: "{Partner}'s" is picked in the person switch (this phone only).
+    var medsShowsPartner: Bool = UserDefaults.standard.bool(forKey: "meds.showsPartner") {
+        didSet { UserDefaults.standard.set(medsShowsPartner, forKey: "meds.showsPartner") }
+    }
     /// Bumped by "Delete all my data" so screens rebuild from scratch instead of keeping open editors.
     var resetGeneration = 0
 

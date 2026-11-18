@@ -139,6 +139,9 @@ enum MedNotifications {
         let medications = group.medications
         let person = group.person
         let ownerTag = person.map { "-\($0.lowercased().filter(\.isLetter))" } ?? ""
+        // A tap opens the day of the person the reminder is about.
+        let owner = medications.first?.owner
+        let medsLink = owner.map { "carry://meds?owner=\($0.rawValue)" } ?? "carry://meds"
 
         for offset in 0..<7 {
             guard let day = cal.date(byAdding: .day, value: offset, to: today) else { continue }
@@ -162,7 +165,8 @@ enum MedNotifications {
                     content.body = body.isEmpty ? "Tap to log it in Carry." : body
                     content.sound = .default
                     content.categoryIdentifier = doseCategory
-                    content.userInfo = ["medID": med.id.uuidString, "scheduledAt": instance.scheduledAt.timeIntervalSince1970]
+                    content.userInfo = ["medID": med.id.uuidString, "scheduledAt": instance.scheduledAt.timeIntervalSince1970,
+                                        "owner": med.owner.rawValue]
                     items.append((instance.scheduledAt, request(id: "dose-\(med.id.uuidString)-\(stamp)", content: content, date: instance.scheduledAt)))
                 }
 
@@ -178,7 +182,7 @@ enum MedNotifications {
                             content.body = "\(med.shortName) in \(Medication.durationText(med.noFoodBeforeMinutes)). Finish eating now so your tummy is empty."
                         }
                         content.sound = .default
-                        content.userInfo = ["link": "carry://meds"]
+                        content.userInfo = ["link": medsLink]
                         items.append((pauseAt, request(id: "prefast-\(med.id.uuidString)-\(stamp)", content: content, date: pauseAt)))
                     }
                 }
@@ -198,7 +202,7 @@ enum MedNotifications {
                     }
                     content.sound = .default
                     content.interruptionLevel = .timeSensitive
-                    content.userInfo = ["link": "carry://meds"]
+                    content.userInfo = ["link": medsLink]
                     items.append((window.end, request(id: "foodok\(ownerTag)-\(Int(window.end.timeIntervalSince1970))", content: content, date: window.end)))
                 }
             }
@@ -308,6 +312,10 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let medIDString = info["medID"] as? String
         let hasMed = info["medID"] != nil
         let stamp = info["scheduledAt"] as? Double
+        var personKeys: [String: String] = [:]
+        for key in ["owner", "taker_id", "medication_id"] {
+            if let value = info[key] as? String { personKeys[key] = value }
+        }
         // The action is pressed when the dose is taken, so the real time is now.
         let takenAt = Date.now
 
@@ -326,7 +334,9 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                     var routed: [AnyHashable: Any] = [:]
                     if let link { routed["link"] = link }
                     if let type { routed["type"] = type }
-                    if hasMed { routed["medID"] = "1" }
+                    if hasMed { routed["medID"] = medIDString ?? "1" }
+                    // Whose day to open: a partner alert's taker, a reminder's owner.
+                    for (key, value) in personKeys { routed[key] = value }
                     DeepLinkRouter.shared.handleNotification(routed)
                 } else if action == MedNotifications.takenAction,
                           let medIDString, let medID = UUID(uuidString: medIDString),

@@ -5,8 +5,18 @@ import SwiftUI
 /// (wake, meals, doses, bedtime). Wake / meal / bed times open an inline wheel; a med's handle opens
 /// the centred Move card (board 19). First time (no meds yet) it goes straight to the editor.
 struct MedsOverviewView: View {
-    var owner: MedOwner
+    private let fixedOwner: MedOwner
+    /// Opened from Meds today: follows (and shows) the Mine / partner switch when both take meds.
+    private let followsSelection: Bool
     @Environment(AppStore.self) private var store
+
+    init(owner: MedOwner, followsSelection: Bool = false) {
+        self.fixedOwner = owner
+        self.followsSelection = followsSelection
+    }
+
+    private var showsSwitch: Bool { followsSelection && store.bothTakeMeds }
+    private var owner: MedOwner { showsSwitch ? store.shownMedsPerson : fixedOwner }
     @Environment(\.dismiss) private var dismiss
 
     @State private var setup: Bool?
@@ -68,8 +78,30 @@ struct MedsOverviewView: View {
             }
         }
         .onAppear {
-            if setup == nil { setup = !store.currentMedications(for: owner).contains { $0.managed } }
+            if setup == nil { setup = needsSetup }
         }
+        .onChange(of: owner) { _, _ in personChanged() }
+    }
+
+    /// No written plan yet: her own goes straight to the editor. Someone else's plan stays read-only.
+    private var needsSetup: Bool {
+        isViewer && !store.currentMedications(for: owner).contains { $0.managed }
+    }
+
+    /// The switch moved to the other person: start their plan fresh.
+    private func personChanged() {
+        openWheel = nil
+        movePopup = nil
+        sheetMed = nil
+        changed = [:]
+        toast = nil
+        undoText = nil
+        if shiftOpen {
+            shiftOpen = false
+            if store.scheduleChange?.kind == .shift { store.scheduleChange = nil }
+        }
+        selectedRoutine = store.activeTemplate(for: owner, on: store.now)?.id
+        setup = needsSetup
     }
 
     private var overview: some View {
@@ -154,7 +186,10 @@ struct MedsOverviewView: View {
             ScreenTitleRow(title: "Meds & routines", onBack: { dismiss() }, backIdentifier: "overview-back") {
                 EmptyView()
             }
-            if !isViewer {
+            if showsSwitch {
+                MedsPersonSwitch()
+                    .padding(.leading, ScreenHeader.row + 10)
+            } else if !isViewer {
                 Text("\(store.name(for: owner))'s plan")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.dayMuted)
@@ -162,6 +197,7 @@ struct MedsOverviewView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .medsPersonSwipe()
     }
 
     private var chips: some View {
@@ -209,7 +245,7 @@ struct MedsOverviewView: View {
             } label: {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("My rules")
+                        Text(owner == store.viewerRole ? "My rules" : "\(store.name(for: owner))'s rules")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Theme.dayText)
                         Text("\(counts.meds) medication\(counts.meds == 1 ? "" : "s") · \(counts.rules) rule\(counts.rules == 1 ? "" : "s")")
@@ -243,18 +279,26 @@ struct MedsOverviewView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
-                    Button {
-                        Haptics.tap()
-                        openEditor()
-                    } label: {
-                        Text("Edit rules")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Theme.rose)
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                            .background(Theme.roseTint, in: .rect(cornerRadius: 14, style: .continuous))
+                    if isViewer {
+                        Button {
+                            Haptics.tap()
+                            openEditor()
+                        } label: {
+                            Text("Edit rules")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Theme.rose)
+                                .frame(maxWidth: .infinity, minHeight: 48)
+                                .background(Theme.roseTint, in: .rect(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(PressableStyle())
+                        .accessibilityIdentifier("edit-meds-rules")
+                    } else {
+                        Text("Only \(store.name(for: owner)) can change \(owner == .mom ? "her" : "his") rules.")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Theme.daySecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("rules-read-only")
                     }
-                    .buttonStyle(PressableStyle())
-                    .accessibilityIdentifier("edit-meds-rules")
                 }
                 .padding(16)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -592,6 +636,7 @@ struct MedsOverviewView: View {
     // MARK: Editor
 
     private func openEditor() {
+        guard isViewer else { return }
         beforeTimes = store.dayState(owner, on: day)?.times ?? [:]
         beforeText = store.medsTextOrFallback(for: owner)
         showEditor = true
