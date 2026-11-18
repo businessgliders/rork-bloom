@@ -73,9 +73,22 @@ enum MedNotifications {
             .prefix(maxRequests)
             .map(\.request)
         // Snoozes for doses that are no longer pending (logged, deleted, unfollowed) are dropped.
-        let stillPending = Set(pendingDoseKeys(medications: groups.flatMap(\.medications), logs: logs, now: now))
-        Task {
+        let meds = groups.flatMap(\.medications)
+        let stillPending = Set(pendingDoseKeys(medications: meds, logs: logs, now: now))
+        // Every dose still on yesterday's or today's plan, taken or not. A delivered reminder for
+        // anything else belongs to a time that moved (a meal re-plan, a manual move) and is cleared.
+        let planned = Set(doseKeys(medications: meds, logs: logs, now: now, pendingOnly: false))
+        // Rebuilds run one after another, so a slower earlier one can't re-add a moved dose's old reminder.
+        let previous = rescheduleTask
+        rescheduleTask = Task {
+            await previous?.value
             let center = UNUserNotificationCenter.current()
+            let delivered = await center.deliveredNotifications().map(\.request.identifier)
+            let stale = delivered.filter { id in
+                guard let key = ["dose-", "prefast-"].first(where: { id.hasPrefix($0) }).map({ String(id.dropFirst($0.count)) }) else { return false }
+                return !planned.contains(key)
+            }
+            if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }
             let pending = await center.pendingNotificationRequests()
             var ids = pending.map(\.identifier).filter { id in prefixes.contains { id.hasPrefix($0) } }
             ids += pending.map(\.identifier).filter { id in
@@ -90,13 +103,19 @@ enum MedNotifications {
         }
     }
 
+    private static var rescheduleTask: Task<Void, Never>?
+
     /// "<medID>-<stamp>" for each pending dose from yesterday to today.
     private static func pendingDoseKeys(medications: [Medication], logs: [DoseLog], now: Date) -> [String] {
+        doseKeys(medications: medications, logs: logs, now: now, pendingOnly: true)
+    }
+
+    private static func doseKeys(medications: [Medication], logs: [DoseLog], now: Date, pendingOnly: Bool) -> [String] {
         let cal = PregnancyMath.calendar
         return [-1, 0].flatMap { offset -> [String] in
             guard let day = cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: now)) else { return [] }
             return MedsEngine.instances(on: day, medications: medications, logs: logs)
-                .filter(\.isPending)
+                .filter { !pendingOnly || $0.isPending }
                 .map { "\($0.medication.id.uuidString)-\(Int($0.scheduledAt.timeIntervalSince1970))" }
         }
     }
