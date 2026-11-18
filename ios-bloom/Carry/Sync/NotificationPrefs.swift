@@ -109,6 +109,13 @@ final class NotificationPrefs {
         } catch {
             saveFailed = true
         }
+        // Best effort, separate from the row above: the partner alert shows "no food until 8:31" in local time.
+        // Fails quietly where the time_zone column hasn't been added yet.
+        struct Zone: Encodable { var time_zone: String }
+        _ = try? await Backend.client.from("notification_prefs")
+            .update(Zone(time_zone: TimeZone.current.identifier))
+            .eq("user_id", value: uid)
+            .execute()
         PushRegistry.shared.setPartnerAlerts(enabled: store.partnerAlertsEnabled)
     }
 

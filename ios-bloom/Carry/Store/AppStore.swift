@@ -221,6 +221,8 @@ final class AppStore {
     /// Set when a slot is completed by the user's action; the Meds tab presents the celebration.
     var celebration: SlotCelebration?
     var undoToast: UndoToast?
+    /// The no-food countdown card (app-wide), set when she logs a dose that starts a no-food window.
+    var noFoodAlert: NoFoodAlert?
     /// Bumped by "Delete all my data" so screens rebuild from scratch instead of keeping open editors.
     var resetGeneration = 0
 
@@ -535,7 +537,8 @@ final class AppStore {
         let wasComplete = isSlotComplete(for: instance)
         setLog(for: instance, status: .taken, takenAt: takenAt)
         proposeAfterLogging(instance, placement: placement)
-        Haptics.success()
+        // The card plays its own warning haptic.
+        if !presentNoFoodAlert(after: instance) { Haptics.success() }
         let late = Int((takenAt.timeIntervalSince(instance.scheduledAt) / 60).rounded())
         undoToast = UndoToast(
             message: "\(instance.medication.shortName) taken at \(takenAt.formatted(date: .omitted, time: .shortened))" + (late > 0 ? " (\(Medication.durationText(late)) late)" : ""),
@@ -605,6 +608,46 @@ final class AppStore {
             $0.medication.id == medicationID && abs($0.scheduledAt.timeIntervalSince(scheduledAt)) < 30
         }), instance.isPending else { return }
         setLog(for: instance, status: .taken, takenAt: takenAt)
+        // Open: the card. In the background (Live Activity, widget, notification action): a time-sensitive notice.
+        if UIApplication.shared.applicationState == .active {
+            presentNoFoodAlert(after: instance)
+        } else if startsNoFood(instance), let alert = activeNoFood(instance.medication.owner) {
+            MedNotifications.postNoFoodStarted(alert)
+        }
+    }
+
+    // MARK: - No-food alert
+
+    /// The running no-food time for one person (today plus last night's carry-over), if any.
+    func activeNoFood(_ owner: MedOwner, at now: Date = .now) -> NoFoodAlert? {
+        let meds = medications.filter { $0.owner == owner }
+        let list = MedsEngine.carryOver(into: now, medications: meds, logs: doseLogs)
+            + MedsEngine.instances(on: now, medications: meds, logs: doseLogs)
+        return MedsEngine.activeNoFood(list, now: now)
+    }
+
+    /// The just-logged dose is the viewer's own and its after-window is still running.
+    private func startsNoFood(_ instance: DoseInstance) -> Bool {
+        let med = instance.medication
+        guard !isShared || isMine(med), med.hasNoFoodWindow, med.noFoodAfterMinutes > 0 else { return false }
+        let logged = doseLogs.first {
+            $0.medicationID == med.id && abs($0.scheduledAt.timeIntervalSince(instance.scheduledAt)) < 30 && $0.status == .taken
+        }
+        guard let takenAt = logged?.takenAt else { return false }
+        return takenAt.addingTimeInterval(Double(med.noFoodAfterMinutes) * 60) > .now
+    }
+
+    @discardableResult
+    private func presentNoFoodAlert(after instance: DoseInstance) -> Bool {
+        guard startsNoFood(instance), let alert = activeNoFood(instance.medication.owner) else { return false }
+        noFoodAlert = alert
+        return true
+    }
+
+    /// A tap on the "No food until" notification: the card again, while the window still runs.
+    func showNoFoodAlertIfActive() {
+        let owner: MedOwner = isShared ? viewerRole : (MedOwner.allCases.first { activeNoFood($0) != nil } ?? viewerRole)
+        noFoodAlert = activeNoFood(owner)
     }
 
     /// Changes that came from Apple Reminders. Applied without re-syncing Reminders.

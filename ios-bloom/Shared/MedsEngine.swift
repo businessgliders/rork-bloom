@@ -38,6 +38,28 @@ nonisolated struct NoFoodWindow: Equatable, Identifiable {
     var title: String { "No food · \(label)" }
 }
 
+/// The no-food time running right now because doses were taken: drives the countdown card,
+/// the "No food until" notification and the meal guard. Counts from taken_at only.
+nonisolated struct NoFoodAlert: Equatable, Identifiable {
+    /// Short names in the order they were taken.
+    var names: [String]
+    /// When the most recent of those doses was taken.
+    var lastTakenAt: Date
+    /// When the first of those doses was taken: the running no-food time spans from here to `end`.
+    var firstTakenAt: Date
+    /// Start of the window that ends last (its dose's taken time).
+    var start: Date
+    /// The latest end among the running windows.
+    var end: Date
+    /// The med's own note, when the window that ends last has one.
+    var note: String?
+
+    var id: String { "\(Int(end.timeIntervalSince1970))-\(names.joined(separator: "+"))" }
+    var namesText: String { names.joined(separator: " & ") }
+    var minutes: Int { max(1, Int((end.timeIntervalSince(start) / 60).rounded())) }
+    func isActive(at now: Date) -> Bool { end > now }
+}
+
 /// One row on the Meds timeline.
 nonisolated enum MedsTimelineEntry: Identifiable, Equatable {
     case dose(DoseInstance)
@@ -177,6 +199,26 @@ nonisolated enum MedsEngine {
             }
         }
         return merged
+    }
+
+    /// After-windows of taken doses that are still running at `now`, as one alert ending at the latest end.
+    /// Planned (not yet taken) doses and "before" parts never count.
+    static func activeNoFood(_ instances: [DoseInstance], now: Date) -> NoFoodAlert? {
+        let running = instances.compactMap { instance -> (med: Medication, taken: Date, end: Date)? in
+            let med = instance.medication
+            guard instance.isTaken, med.hasNoFoodWindow, med.noFoodAfterMinutes > 0,
+                  let taken = instance.log?.takenAt else { return nil }
+            let end = taken.addingTimeInterval(Double(med.noFoodAfterMinutes) * 60)
+            return end > now ? (med, taken, end) : nil
+        }
+        .sorted { $0.taken < $1.taken }
+        guard let last = running.max(by: { $0.end < $1.end }) else { return nil }
+        var names: [String] = []
+        for item in running where !names.contains(item.med.shortName) { names.append(item.med.shortName) }
+        let note = last.med.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return NoFoodAlert(names: names, lastTakenAt: running.last?.taken ?? last.taken,
+                           firstTakenAt: running.first?.taken ?? last.taken, start: last.taken,
+                           end: last.end, note: note.isEmpty ? nil : note)
     }
 
     // MARK: Timeline

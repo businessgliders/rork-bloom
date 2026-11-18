@@ -197,12 +197,32 @@ enum MedNotifications {
                         content.body = "Your no-food window for \(reasons) is over."
                     }
                     content.sound = .default
+                    content.interruptionLevel = .timeSensitive
                     content.userInfo = ["link": "carry://meds"]
                     items.append((window.end, request(id: "foodok\(ownerTag)-\(Int(window.end.timeIntervalSince1970))", content: content, date: window.end)))
                 }
             }
         }
         return items
+    }
+
+    /// Right away, when a dose logged outside the app (Live Activity, widget, notification action)
+    /// starts a no-food window. Its prefix is not cleared by `reschedule`. A tap opens the countdown card.
+    static func postNoFoodStarted(_ alert: NoFoodAlert) {
+        let content = UNMutableNotificationContent()
+        content.title = "No food until \(alert.end.formatted(date: .omitted, time: .shortened))"
+        content.body = "\(spokenDuration(alert.minutes)) after \(alert.namesText). Water is fine."
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
+        content.userInfo = ["link": "carry://nofood"]
+        let request = UNNotificationRequest(identifier: "nofood-now-\(Int(alert.end.timeIntervalSince1970))", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// "30 minutes", "1 minute", "1 h 30 min".
+    static func spokenDuration(_ minutes: Int) -> String {
+        if minutes < 60 { return minutes == 1 ? "1 minute" : "\(minutes) minutes" }
+        return Medication.durationText(minutes)
     }
 
     private static func request(id: String, content: UNNotificationContent, date: Date) -> UNNotificationRequest {

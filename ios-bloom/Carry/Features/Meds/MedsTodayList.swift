@@ -27,6 +27,15 @@ struct MedsTodayList: View {
     @State private var settle: Task<Void, Never>?
     /// The row whose "When did you take it?" menu is open.
     @State private var logMenu: String?
+    /// A meal checked off inside a running no-food window, waiting for "Log anyway".
+    @State private var mealGuard: MealGuard?
+
+    private struct MealGuard: Equatable {
+        var entryID: String
+        var meal: ScheduleMeal
+        var time: Date
+        var alert: NoFoodAlert
+    }
 
     fileprivate enum Entry: Identifiable {
         case dose(DoseInstance)
@@ -166,6 +175,12 @@ struct MedsTodayList: View {
                         .onChange(of: doseMove.check != nil) { _, shown in if shown { revealInScroll?(Self.doseMoveScrollID) } }
                 }
                 if case .meal(let meal, _) = entry {
+                    if let mealGuard, mealGuard.entryID == entry.id {
+                        guardCard(mealGuard)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 10)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                     ForEach(clashes(for: meal), id: \.id) { clash in
                         MealClashCard(
                             clash: clash,
@@ -190,6 +205,7 @@ struct MedsTodayList: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.85),
                    value: instances.map { "\($0.id)\($0.anchor.timeIntervalSince1970)\($0.status?.rawValue ?? "")" })
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: picker?.entryID)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: mealGuard?.entryID)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: doseMove?.entryID)
         .animation(.spring(response: 0.35, dampingFraction: 0.88), value: doseMove?.wheel)
         .animation(.spring(response: 0.35, dampingFraction: 0.88), value: doseMove?.check)
@@ -380,8 +396,7 @@ struct MedsTodayList: View {
                     Haptics.select()
                     store.undoMeal(meal, owner: owner, day: day)
                 } else if abs(Date.now.timeIntervalSince(planned)) <= 600 {
-                    Haptics.success()
-                    store.logMeal(meal, owner: owner, day: day, at: .now)
+                    checkOffMeal(meal, at: .now, entryID: entryID)
                 } else {
                     openLogMenu(menuID)
                 }
@@ -395,8 +410,7 @@ struct MedsTodayList: View {
                     wheelLabel: "Finished at",
                     onPick: { time in
                         logMenu = nil
-                        Haptics.success()
-                        store.logMeal(meal, owner: owner, day: day, at: time)
+                        checkOffMeal(meal, at: time, entryID: entryID)
                     }
                 )
             }
@@ -405,6 +419,34 @@ struct MedsTodayList: View {
             .accessibilityLabel(log == nil ? "Mark \(meal.name) eaten" : "Undo \(meal.name)")
             .accessibilityAction { if log == nil { openLogMenu(menuID) } else { store.undoMeal(meal, owner: owner, day: day) } }
             .accessibilityIdentifier("meal-check-\(meal.name)")
+    }
+
+    /// Logs the meal, or asks first when that time falls inside a running no-food window.
+    private func checkOffMeal(_ meal: ScheduleMeal, at time: Date, entryID: String) {
+        if let alert = store.activeNoFood(owner), time >= alert.firstTakenAt, time < alert.end {
+            Haptics.warning()
+            picker = nil
+            mealGuard = MealGuard(entryID: entryID, meal: meal, time: time, alert: alert)
+            return
+        }
+        mealGuard = nil
+        Haptics.success()
+        store.logMeal(meal, owner: owner, day: day, at: time)
+    }
+
+    private func guardCard(_ item: MealGuard) -> some View {
+        let alert = item.alert
+        let names = alert.namesText
+        let mealName = item.meal.name.lowercased()
+        return MealNoFoodGuard(
+            title: "No food until \(DayList.clock(alert.end)) (\(names))",
+            detail: "\(names) \(alert.names.count > 1 ? "were" : "was") taken at \(shortClock(alert.lastTakenAt)). Log \(mealName) anyway?",
+            onNotYet: { mealGuard = nil },
+            onLogAnyway: {
+                mealGuard = nil
+                store.logMeal(item.meal, owner: owner, day: day, at: item.time)
+            }
+        )
     }
 
     private func mealQuestion(_ meal: ScheduleMeal) -> String {

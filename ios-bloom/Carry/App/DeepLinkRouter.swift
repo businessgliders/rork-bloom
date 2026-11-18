@@ -22,6 +22,11 @@ final class DeepLinkRouter {
         case "meds", "dose":
             openMeds()
             return true
+        case "nofood":
+            // The "No food until" notification: Meds, with the countdown card while the window runs.
+            openMeds()
+            AppStore.shared.showNoFoodAlertIfActive()
+            return true
         default:
             return false
         }

@@ -37,6 +37,21 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.45), value: store.isOnboarded)
         .overlay {
+            // After a slot celebration closes, so the two never stack.
+            if let alert = store.noFoodAlert, store.isOnboarded, store.celebration == nil {
+                ZStack {
+                    Color.black.opacity(0.35)
+                        .ignoresSafeArea()
+                        .onTapGesture {}
+                        .accessibilityHidden(true)
+                    NoFoodCountdownCard(alert: alert) { store.noFoodAlert = nil }
+                        .id(alert.id)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: store.noFoodAlert?.id)
+        .overlay {
             if showSplash {
                 LaunchSplash(
                     greetingName: greetingName,

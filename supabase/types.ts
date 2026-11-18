@@ -438,6 +438,7 @@ export type Database = {
           partner_alerts: boolean
           pregnancy_id: string | null
           share_recap_with_partner: boolean
+          time_zone: string | null
           updated_at: string
           user_id: string
         }
@@ -448,6 +449,7 @@ export type Database = {
           partner_alerts?: boolean
           pregnancy_id?: string | null
           share_recap_with_partner?: boolean
+          time_zone?: string | null
           updated_at?: string
           user_id: string
         }
@@ -458,6 +460,7 @@ export type Database = {
           partner_alerts?: boolean
           pregnancy_id?: string | null
           share_recap_with_partner?: boolean
+          time_zone?: string | null
           updated_at?: string
           user_id?: string
         }

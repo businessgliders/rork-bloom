@@ -180,6 +180,14 @@ When a `dose_logs` row is inserted or updated to `status = 'taken'`:
    - `{taker} took her {medication}` when the taker is mom (for example "Maya took her prenatal vitamin")
    - `{taker} took his {medication}` when the taker is the partner
    - If `logged_by` isn't the taker, add ` · logged by {name}`.
+   - **No-food window:** when the med has `no_food_after_min > 0` and
+     `taken_at + no_food_after_min` is still in the future, append ` · no food until {h:mm}`,
+     for example "Jaismine took her Thyroid · no food until 8:31". Format `{h:mm}` in the taker's
+     `notification_prefs.time_zone` (falling back to the recipient's, then UTC), 12-hour without AM/PM.
+     Also add `"no_food_until": <unix seconds>` to the payload. Send it with
+     `"interruption-level": "time-sensitive"` in `aps`.
+   - Keep the Live Activity update push for the same log (windowStart/windowEnd), so the partner's
+     Live Activity shows the same countdown. The partner's phone shows no popup.
 
 Headers: `apns-push-type: alert`, `apns-topic: app.businessgliders.bloom`, `apns-priority: 10`.
 

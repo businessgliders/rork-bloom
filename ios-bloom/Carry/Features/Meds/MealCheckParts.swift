@@ -30,6 +30,55 @@ struct MealCheckCircle: View {
     }
 }
 
+/// Asks first when a meal is checked off while a no-food window from a taken dose is running.
+struct MealNoFoodGuard: View {
+    var title: String
+    var detail: String
+    var onNotYet: () -> Void
+    var onLogAnyway: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Circle().fill(Theme.terraDot).frame(width: 8, height: 8)
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.terraText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(detail)
+                .font(.system(size: 14))
+                .monospacedDigit()
+                .foregroundStyle(Theme.dayText)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button {
+                    Haptics.select()
+                    onNotYet()
+                } label: {
+                    Text("Not yet").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.dayText, fill: .white))
+                .accessibilityIdentifier("meal-guard-not-yet")
+                Button {
+                    Haptics.tap()
+                    onLogAnyway()
+                } label: {
+                    Text("Log anyway").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(BloomSoftButtonStyle(tint: Theme.terraText, fill: .clear))
+                .overlay(Capsule().strokeBorder(Theme.terraDot, lineWidth: 1.5))
+                .accessibilityIdentifier("meal-guard-log-anyway")
+            }
+        }
+        .padding(14)
+        .background(Theme.terraTint, in: .rect(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("meal-guard")
+    }
+}
+
 /// The inline card under a meal row when the meal ran into a no-food rule. Taker's phone only.
 struct MealClashCard: View {
     var clash: MealClash
