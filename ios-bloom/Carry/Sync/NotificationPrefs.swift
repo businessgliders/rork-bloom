@@ -40,6 +40,21 @@ final class NotificationPrefs {
         var note_time: String
         var include_recap: Bool
         var share_recap_with_partner: Bool
+        var partner_alerts: Bool?
+    }
+
+    /// The Partner alerts toggle couldn't be saved: the next load pushes the local value instead of reading it.
+    private static let partnerAlertsDirtyKey = "prefs.partnerAlertsDirty"
+    private var partnerAlertsDirty: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.partnerAlertsDirtyKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.partnerAlertsDirtyKey) }
+    }
+
+    /// Partner alerts (`notification_prefs.partner_alerts`); the store keeps the local copy as a cache.
+    func setPartnerAlerts(_ enabled: Bool) async {
+        AppStore.shared.setPartnerAlertsEnabled(enabled)
+        partnerAlertsDirty = true
+        await save()
     }
 
     /// Loads the row; creates it with the defaults when missing.
@@ -48,7 +63,7 @@ final class NotificationPrefs {
         guard let uid = store.myUserID else { return }
         do {
             let rows: [Row] = try await Backend.client.from("notification_prefs")
-                .select("user_id,pregnancy_id,daily_note,note_time,include_recap,share_recap_with_partner")
+                .select("user_id,pregnancy_id,daily_note,note_time,include_recap,share_recap_with_partner,partner_alerts")
                 .eq("user_id", value: uid)
                 .limit(1)
                 .execute()
@@ -60,7 +75,14 @@ final class NotificationPrefs {
                 shareRecapWithPartner = row.share_recap_with_partner
                 cache()
                 loaded = true
-                if row.pregnancy_id != store.account?.pregnancyID { await save() }
+                var needsSave = row.pregnancy_id != store.account?.pregnancyID
+                if partnerAlertsDirty {
+                    needsSave = true
+                } else if let remote = row.partner_alerts, remote != store.partnerAlertsEnabled {
+                    store.setPartnerAlertsEnabled(remote)
+                    PushRegistry.shared.setPartnerAlerts(enabled: remote)
+                }
+                if needsSave { await save() }
             } else {
                 loaded = true
                 await save()
@@ -76,12 +98,14 @@ final class NotificationPrefs {
         guard let uid = store.myUserID else { return }
         let row = Row(user_id: uid, pregnancy_id: store.account?.pregnancyID, daily_note: dailyNote,
                       note_time: Self.timeString(noteMinutes), include_recap: includeRecap,
-                      share_recap_with_partner: shareRecapWithPartner)
+                      share_recap_with_partner: shareRecapWithPartner,
+                      partner_alerts: store.partnerAlertsEnabled)
         do {
             try await Backend.client.from("notification_prefs")
                 .upsert(row, onConflict: "user_id")
                 .execute()
             saveFailed = false
+            partnerAlertsDirty = false
         } catch {
             saveFailed = true
         }

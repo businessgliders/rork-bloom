@@ -29,6 +29,22 @@ final class PushRegistry {
         }
     }
     private var observedActivities: Set<String> = []
+    /// The last failed `device_tokens` write (hidden debug info). Cleared by the next success.
+    private(set) var lastUploadError: String?
+    private(set) var lastUploadErrorAt: Date?
+    /// A write failed; the next foreground's `registerAll` re-sends everything.
+    private(set) var needsRetry = false
+    /// Update tokens the server accepted, keyed by activity id.
+    private(set) var uploadedUpdateTokens: Set<String> = []
+
+    /// Whether a running activity has an update token on file (and whether it reached the server).
+    var updateTokenSummary: String {
+        let running = Set(Activity<BloomActivityAttributes>.activities.filter { !Self.isOver($0.activityState) }.map(\.id))
+        let known = updateTokens.keys.filter { running.contains($0) }
+        if known.isEmpty { return running.isEmpty ? "no activity running" : "none (\(running.count) running)" }
+        let sent = known.filter { uploadedUpdateTokens.contains($0) }.count
+        return "\(known.count) token\(known.count == 1 ? "" : "s"), \(sent) uploaded"
+    }
 
     private init() {
         apnsToken = UserDefaults.standard.string(forKey: "push.apns")
@@ -62,12 +78,17 @@ final class PushRegistry {
         Task { await sweepEnded() }
         Task {
             for await activity in Activity<BloomActivityAttributes>.activityUpdates {
+                // Usually one the server push-started. Keep only the newest per taker.
+                LiveActivityController.noteSeen(activity)
                 self.observe(activity)
+                LiveActivityController.endOlderDuplicates(keeping: activity)
             }
         }
     }
 
-    private func observe(_ activity: Activity<BloomActivityAttributes>) {
+    /// Uploads the activity's update tokens. Called for activities this app starts itself
+    /// (`activityUpdates` doesn't report those) and for push-started ones.
+    func observe(_ activity: Activity<BloomActivityAttributes>) {
         guard !observedActivities.contains(activity.id) else { return }
         let takerID = activity.attributes.takerID
         // Already over (e.g. ended while the app was closed): just clean up its row.
@@ -124,12 +145,20 @@ final class PushRegistry {
                 .execute()
         } catch { ok = false }
         // Keep the entry on failure so the next launch or foreground retries.
-        if ok { updateTokens[activityID] = nil }
+        if ok {
+            updateTokens[activityID] = nil
+            uploadedUpdateTokens.remove(activityID)
+        }
     }
 
-    /// Re-sends every known token (after sign-in, joining, or a pregnancy change).
+    /// Re-sends every known token (sign-in, joining, a pregnancy change, and every foreground).
+    /// Each upsert bumps the row's updated_at; the server drops update tokens unheard of for 8 h.
     func registerAll() {
+        start()
+        // Activities started while the observers weren't running yet.
+        for activity in Activity<BloomActivityAttributes>.activities { observe(activity) }
         Task {
+            needsRetry = false
             await sweepEnded()
             if let startToken { await upsert(token: startToken, kind: .start, activityID: nil) }
             for (activityID, entry) in updateTokens {
@@ -175,7 +204,11 @@ final class PushRegistry {
 
     private func upsert(token: String, kind: Kind, activityID: String?) async {
         let store = AppStore.shared
-        guard let uid = store.myUserID, let pid = store.account?.pregnancyID else { return }
+        guard let uid = store.myUserID, let pid = store.account?.pregnancyID else {
+            // Not signed in or not shared yet: sent by registerAll once it is.
+            needsRetry = true
+            return
+        }
         let payload: [String: AnyJSON] = [
             "token": .string(token),
             "type": .string(kind.rawValue),
@@ -188,8 +221,15 @@ final class PushRegistry {
             try await Backend.client.from("device_tokens")
                 .upsert(payload, onConflict: "token,type")
                 .execute()
+            if kind == .update, let activityID, let id = activityID.split(separator: ":").last.map(String.init) {
+                uploadedUpdateTokens.insert(id)
+            }
+            lastUploadError = nil
         } catch {
-            // Retried on the next registerAll (launch, foreground, sign-in).
+            // Retried on the next registerAll (every foreground, sign-in).
+            needsRetry = true
+            lastUploadError = "\(kind.rawValue): \(error.localizedDescription)"
+            lastUploadErrorAt = .now
         }
     }
 

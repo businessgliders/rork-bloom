@@ -67,10 +67,10 @@ enum MedNotifications {
 
     static func reschedule(groups: [Group], logs: [DoseLog]) {
         let now = Date.now
+        // Nearest first, so today's and tomorrow's are never the ones cut by iOS's 64-request limit.
         let requests = groups
             .flatMap { buildRequests(group: $0, logs: logs, now: now) }
             .sorted { $0.date < $1.date }
-            .prefix(maxRequests)
             .map(\.request)
         // Snoozes for doses that are no longer pending (logged, deleted, unfollowed) are dropped.
         let meds = groups.flatMap(\.medications)
@@ -95,12 +95,24 @@ enum MedNotifications {
                 id.hasPrefix(snoozePrefix) && !stillPending.contains(String(id.dropFirst(snoozePrefix.count)))
             }
             center.removePendingNotificationRequests(withIdentifiers: ids)
+            let removed = Set(ids)
+            // Other pending requests (kept snoozes) share the 60.
+            let others = pending.filter { !removed.contains($0.identifier) }.count
             let settings = await center.notificationSettings()
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
-            for request in requests {
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+                    || settings.authorizationStatus == .ephemeral else { return }
+            for request in requests.prefix(max(0, maxRequests - others)) {
                 try? await center.add(request)
             }
         }
+    }
+
+    /// Pending count and the next one's time, for the hidden debug info.
+    static func pendingSummary() async -> (count: Int, next: Date?) {
+        let pending = await UNUserNotificationCenter.current().pendingNotificationRequests()
+        let next = pending.compactMap { ($0.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
+            ?? ($0.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate() }.min()
+        return (pending.count, next)
     }
 
     private static var rescheduleTask: Task<Void, Never>?
@@ -138,7 +150,7 @@ enum MedNotifications {
 
                 if instance.scheduledAt > now {
                     let content = UNMutableNotificationContent()
-                    content.title = person.map { "\(med.emoji) \($0): time for \(med.shortName)" } ?? "\(med.emoji) Time for \(med.shortName)"
+                    content.title = person.map { "\($0): time for \(med.shortName)" } ?? "Time for \(med.shortName)"
                     var body = med.dose.isEmpty ? "" : med.dose
                     switch med.foodRule {
                     case .emptyStomach where med.noFoodAfterMinutes > 0:
@@ -159,10 +171,10 @@ enum MedNotifications {
                     if pauseAt > now {
                         let content = UNMutableNotificationContent()
                         if let person {
-                            content.title = "\(person): snack pause 🍓"
+                            content.title = "\(person): snack pause"
                             content.body = "\(med.shortName) in \(Medication.durationText(med.noFoodBeforeMinutes)). Time for \(person) to finish eating."
                         } else {
-                            content.title = "Snack pause 🍓"
+                            content.title = "Snack pause"
                             content.body = "\(med.shortName) in \(Medication.durationText(med.noFoodBeforeMinutes)). Finish eating now so your tummy is empty."
                         }
                         content.sound = .default
@@ -177,11 +189,11 @@ enum MedNotifications {
                     let content = UNMutableNotificationContent()
                     let reasons = window.reasons.joined(separator: " & ")
                     if let person {
-                        content.title = "\(person) can eat again 🍽️"
+                        content.title = "\(person) can eat again"
                         content.body = "The no-food window for \(reasons) is over."
                     } else {
-                        content.title = "You can eat again 🍽️"
-                        content.body = "Your no-food window for \(reasons) is over. Enjoy!"
+                        content.title = "You can eat again"
+                        content.body = "Your no-food window for \(reasons) is over."
                     }
                     content.sound = .default
                     items.append((window.end, request(id: "foodok\(ownerTag)-\(Int(window.end.timeIntervalSince1970))", content: content, date: window.end)))

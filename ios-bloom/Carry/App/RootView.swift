@@ -10,6 +10,7 @@ struct RootView: View {
     /// The launch splash plays once per cold launch (onboarding plays its own intro).
     @State private var showSplash = AppStore.shared.isOnboarded
     @State private var revealed = !AppStore.shared.isOnboarded
+    @State private var permission = NotificationPermission.shared
 
     private var greetingName: String? {
         guard store.isSignedIn else { return nil }
@@ -60,17 +61,32 @@ struct RootView: View {
             }
             try? await Task.sleep(for: .seconds(0.8))
             if shouldOfferSync { showSyncPrompt = true }
+            await checkNotifications()
         }
+        .sheet(isPresented: $permission.showPrePrompt) { NotificationPrePrompt() }
         // The welcome screen already offers sign-in, so new people never see the old invite.
         .onChange(of: store.isOnboarded) { _, onboarded in
-            if onboarded { syncPromptSeen = true }
+            if onboarded {
+                syncPromptSeen = true
+                // People who came through welcome + sign-in skipped the old permission step.
+                Task {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    await checkNotifications()
+                }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
+            switch phase {
+            case .active:
                 store.reloadIfChangedExternally()
                 store.now = .now
                 store.refreshReminders()
-                sync.refresh()
+                sync.didBecomeActive()
+                Task { await checkNotifications() }
+            case .background:
+                sync.didEnterBackground()
+            default:
+                break
             }
         }
         .alert("Couldn't sync", isPresented: Binding(
@@ -88,7 +104,14 @@ struct RootView: View {
                 store.now = .now
                 // Only pushes an update when the content actually changed.
                 LiveActivityController.sync(store: store)
+                if scenePhase == .active { sync.backstop() }
             }
         }
+    }
+
+    /// Reads the permission; offers the pre-prompt only once she is in the app and nothing else is showing.
+    private func checkNotifications() async {
+        let canOffer = store.isOnboarded && !showSplash && !showSyncPrompt
+        await permission.refresh(offerPrompt: canOffer)
     }
 }

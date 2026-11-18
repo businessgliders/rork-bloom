@@ -45,6 +45,14 @@ final class SyncEngine {
     private var pullTask: Task<Void, Never>?
     private var isFlushing = false
     private var flushAgain = false
+    /// Realtime health (hidden debug info and the reconnect logic).
+    private(set) var realtimeStatus = "not subscribed"
+    private(set) var lastRealtimeEvent: Date?
+    private(set) var lastPullAt: Date?
+    private var appActive = true
+    private var resubscribeTask: Task<Void, Never>?
+    private var resubscribeAttempt = 0
+    private static let backoff: [Double] = [1, 2, 5, 10]
     private let monitor = NWPathMonitor()
 
     private init() {}
@@ -83,6 +91,68 @@ final class SyncEngine {
         guard store.isShared else { return }
         scheduleFlush()
         requestPull()
+    }
+
+    /// scenePhase .active: re-send push tokens, reconnect realtime when it isn't subscribed, pull.
+    func didBecomeActive() {
+        appActive = true
+        guard isSignedIn else { return }
+        PushRegistry.shared.registerAll()
+        guard store.isShared, let pid = store.account?.pregnancyID else { return }
+        scheduleFlush()
+        if !isRealtimeHealthy {
+            resubscribeAttempt = 0
+            resubscribeTask?.cancel()
+            resubscribeTask = Task { await resubscribe(pid) }
+        } else {
+            requestPull()
+        }
+    }
+
+    func didEnterBackground() {
+        appActive = false
+        resubscribeTask?.cancel()
+        resubscribeTask = nil
+    }
+
+    private var isRealtimeHealthy: Bool {
+        guard let channel else { return false }
+        return channel.status == .subscribed
+    }
+
+    /// The 60 s loop's backstop while active: pull when realtime has been quiet for over a minute,
+    /// and reconnect if the channel quietly dropped.
+    func backstop() {
+        guard appActive, store.isShared, let pid = store.account?.pregnancyID else { return }
+        if !isRealtimeHealthy, resubscribeTask == nil {
+            resubscribeTask = Task { await resubscribe(pid) }
+            return
+        }
+        let quietSince = max(lastRealtimeEvent ?? .distantPast, lastPullAt ?? .distantPast)
+        if Date.now.timeIntervalSince(quietSince) > 60 { requestPull(immediately: true) }
+    }
+
+    private func resubscribe(_ pid: UUID) async {
+        await unsubscribe()
+        await subscribe(pid)
+        resubscribeTask = nil
+        if isRealtimeHealthy {
+            resubscribeAttempt = 0
+        }
+        requestPull(immediately: true)
+    }
+
+    /// Closed or errored while active: try again after 1 s, 2 s, 5 s, 10 s, then every 30 s.
+    private func scheduleResubscribe() {
+        guard appActive, store.isShared, let pid = store.account?.pregnancyID, resubscribeTask == nil else { return }
+        let delay = resubscribeAttempt < Self.backoff.count ? Self.backoff[resubscribeAttempt] : 30
+        resubscribeAttempt += 1
+        realtimeStatus = "reconnecting in \(Int(delay)) s"
+        resubscribeTask = Task {
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await resubscribe(pid)
+        }
     }
 
     private func handle(event: AuthChangeEvent, session: Session?) async {
@@ -298,26 +368,57 @@ final class SyncEngine {
                       "schedule_templates", "template_items", "schedule_rules", "planned_doses", "day_routines", "med_texts", "meal_logs"] {
             let stream = ch.postgresChange(AnyAction.self, schema: "public", table: table)
             realtimeTasks.append(Task {
-                for await _ in stream { SyncEngine.shared.requestPull() }
+                for await _ in stream {
+                    SyncEngine.shared.lastRealtimeEvent = .now
+                    SyncEngine.shared.requestPull()
+                }
             })
         }
+        realtimeStatus = "subscribing"
         do {
             try await ch.subscribeWithError()
             channel = ch
             channelPregnancy = pregnancyID
+            realtimeStatus = "subscribed"
+            // Watches for the channel closing or erroring; cancelled before our own unsubscribe.
+            realtimeTasks.append(Task {
+                for await status in ch.statusChange {
+                    SyncEngine.shared.channelStatusChanged(ch, status: status)
+                }
+            })
         } catch {
             realtimeTasks.forEach { $0.cancel() }
             realtimeTasks = []
             await Backend.client.removeChannel(ch)
+            realtimeStatus = "error: \(error.localizedDescription)"
+            scheduleResubscribe()
+        }
+    }
+
+    private func channelStatusChanged(_ ch: RealtimeChannelV2, status: RealtimeChannelStatus) {
+        guard channel === ch else { return }
+        switch status {
+        case .subscribed:
+            realtimeStatus = "subscribed"
+            resubscribeAttempt = 0
+        case .subscribing: realtimeStatus = "subscribing"
+        case .unsubscribing: realtimeStatus = "unsubscribing"
+        case .unsubscribed:
+            realtimeStatus = "closed"
+            scheduleResubscribe()
+        @unknown default:
+            realtimeStatus = "unknown"
         }
     }
 
     private func unsubscribe() async {
         realtimeTasks.forEach { $0.cancel() }
         realtimeTasks = []
-        if let channel { await Backend.client.removeChannel(channel) }
+        let old = channel
         channel = nil
         channelPregnancy = nil
+        if let old { await Backend.client.removeChannel(old) }
+        realtimeStatus = "not subscribed"
     }
 
     // MARK: - Pull
@@ -403,6 +504,9 @@ final class SyncEngine {
         // A partner who just joined makes queued partner meds sendable.
         let hadPartner = store.account?.partnerJoined ?? false
         store.applyRemote(remote)
+        lastPullAt = .now
+        // Keep reminders filled after every pull, even when nothing in the plan changed.
+        MedNotifications.reschedule(store: store)
         if !hadPartner, store.account?.partnerJoined == true { scheduleFlush() }
         lastError = nil
         await downloadMissingPhotos()

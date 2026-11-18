@@ -175,6 +175,7 @@ struct MedsView: View {
         let list = instances(on: selectedDay)
         AdaptiveColumns {
             PaneScroll(pane: .primary, spacing: 18) {
+                NotificationsOffBanner()
                 header
                 weekStrip
                 status(list)
@@ -201,6 +202,7 @@ struct MedsView: View {
         } compact: {
             ScrollViewReader { proxy in
                 PaneScroll(spacing: 18) {
+                    NotificationsOffBanner()
                     header
                     weekStrip
                     status(list)

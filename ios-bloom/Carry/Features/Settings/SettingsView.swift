@@ -22,6 +22,8 @@ struct SettingsView: View {
     @State private var accountError: String?
     @State private var startOverOwner: MedOwner?
     @State private var showYouTwo = false
+    @State private var showDebug = false
+    @State private var permission = NotificationPermission.shared
 
     var body: some View {
         NavigationStack {
@@ -51,7 +53,11 @@ struct SettingsView: View {
                 }
             }
             .onAppear { exportURL = store.exportFile() }
-            .task { await prefs.load() }
+            .task {
+                await permission.refresh(offerPrompt: false)
+                await prefs.load()
+            }
+            .sheet(isPresented: $showDebug) { SyncDebugView() }
             .navigationDestination(item: $startOverOwner) { who in
                 MedsRoutinesView(owner: who, editing: true, onApplied: { startOverOwner = nil })
             }
@@ -228,9 +234,8 @@ struct SettingsView: View {
             if hasPregnancy {
                 captionedToggle("Partner alerts", caption: "When \(otherName) logs a med you follow",
                                 isOn: Binding(get: { store.partnerAlertsEnabled }, set: { value in
-                                    store.setPartnerAlertsEnabled(value)
-                                    PushRegistry.shared.setPartnerAlerts(enabled: value)
                                     Haptics.select()
+                                    Task { await prefs.setPartnerAlerts(value) }
                                 }))
             }
             captionedToggle("Apple Reminders", caption: "Mirror doses into a Carry Meds list",
@@ -348,6 +353,13 @@ struct SettingsView: View {
                 HStack {
                     Text("Notifications").foregroundStyle(Theme.dayText)
                     Spacer()
+                    if permission.isOn {
+                        Text("On").foregroundStyle(Theme.daySecondary)
+                    } else if permission.checked {
+                        Text("Off \u{00B7} Turn on")
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.rose)
+                    }
                     Image(systemName: "arrow.up.forward")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.dayMuted)
@@ -355,6 +367,7 @@ struct SettingsView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("settings-notifications")
         } header: {
             header("App")
         }
@@ -447,6 +460,11 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.dayMuted)
             }
             .frame(maxWidth: .infinity)
+            .contentShape(.rect)
+            .onLongPressGesture(minimumDuration: 0.8) {
+                Haptics.tap()
+                showDebug = true
+            }
             .listRowBackground(Color.clear)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("settings-version")
