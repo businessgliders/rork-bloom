@@ -215,56 +215,72 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationRouter()
     weak var store: AppStore?
 
+    // Completion-handler versions on purpose: the async versions finish on a background
+    // thread, and iOS aborts when the system completion runs off the main thread
+    // (build 20 crash on a cold launch from a notification tap). Every completion
+    // below is called on the main thread, exactly once.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
         // A push from the partner's phone means shared data changed.
-        if notification.request.trigger is UNPushNotificationTrigger {
-            await MainActor.run { SyncEngine.shared.requestPull() }
+        let isPush = notification.request.trigger is UNPushNotificationTrigger
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if isPush { SyncEngine.shared.requestPull() }
+            }
+            completionHandler([.banner, .sound, .list])
         }
-        return [.banner, .sound, .list]
     }
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let action = response.actionIdentifier
         let content = response.notification.request.content
-        if response.actionIdentifier == MedNotifications.snoozeAction {
-            await MedNotifications.snooze(content)
-            return
-        }
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-            // A plain tap: partner pushes carry a `link` (carry://meds) or a dose `type`.
-            let info = content.userInfo
-            let link = info["link"] as? String
-            let type = info["type"] as? String
-            let hasMed = info["medID"] != nil
-            await MainActor.run {
-                var routed: [AnyHashable: Any] = [:]
-                if let link { routed["link"] = link }
-                if let type { routed["type"] = type }
-                if hasMed { routed["medID"] = "1" }
-                DeepLinkRouter.shared.handleNotification(routed)
+        let info = content.userInfo
+        let link = info["link"] as? String
+        let type = info["type"] as? String
+        let medIDString = info["medID"] as? String
+        let hasMed = info["medID"] != nil
+        let stamp = info["scheduledAt"] as? Double
+        // The action is pressed when the dose is taken, so the real time is now.
+        let takenAt = Date.now
+
+        if action == MedNotifications.snoozeAction {
+            Task { @MainActor in
+                await MedNotifications.snooze(content)
+                completionHandler()
             }
             return
         }
-        guard response.actionIdentifier == MedNotifications.takenAction else { return }
-        let info = content.userInfo
-        guard let idString = info["medID"] as? String,
-              let medID = UUID(uuidString: idString),
-              let stamp = info["scheduledAt"] as? Double else { return }
-        // The action is pressed when the dose is taken, so the real time is now.
-        let takenAt = Date.now
-        await MainActor.run {
-            // The widget may have changed the file while Carry was suspended.
-            NotificationRouter.shared.store?.reloadIfChangedExternally()
-            NotificationRouter.shared.store?.markTaken(
-                medicationID: medID,
-                scheduledAt: Date(timeIntervalSince1970: stamp),
-                at: takenAt
-            )
+
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if action == UNNotificationDefaultActionIdentifier {
+                    // A plain tap: partner pushes carry a `link` (carry://meds) or a dose `type`.
+                    var routed: [AnyHashable: Any] = [:]
+                    if let link { routed["link"] = link }
+                    if let type { routed["type"] = type }
+                    if hasMed { routed["medID"] = "1" }
+                    DeepLinkRouter.shared.handleNotification(routed)
+                } else if action == MedNotifications.takenAction,
+                          let medIDString, let medID = UUID(uuidString: medIDString),
+                          let stamp,
+                          let store = NotificationRouter.shared.store {
+                    // The widget may have changed the file while Carry was suspended.
+                    store.reloadIfChangedExternally()
+                    store.markTaken(
+                        medicationID: medID,
+                        scheduledAt: Date(timeIntervalSince1970: stamp),
+                        at: takenAt
+                    )
+                }
+            }
+            completionHandler()
         }
     }
 }
