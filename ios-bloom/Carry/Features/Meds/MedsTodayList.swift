@@ -306,7 +306,6 @@ struct MedsTodayList: View {
 
     private func pendingCheck(_ instance: DoseInstance, entryID: String) -> some View {
         let med = instance.medication
-        let isOpen = Binding(get: { logMenu == entryID }, set: { if !$0, logMenu == entryID { logMenu = nil } })
         return CheckCircle(state: .open)
             .scaleEffect(logMenu == entryID ? 0.9 : 1)
             .animation(.snappy(duration: 0.18), value: logMenu == entryID)
@@ -319,7 +318,7 @@ struct MedsTodayList: View {
                 }
             }
             .onLongPressGesture(minimumDuration: 0.4) { openLogMenu(entryID) }
-            .popover(isPresented: isOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            .anchoredMenu(id: entryID, isPresented: logMenu == entryID, onDismiss: { closeLogMenu(entryID) }) {
                 TakenTimeMenu(
                     instance: instance,
                     question: takenQuestion(med),
@@ -332,7 +331,6 @@ struct MedsTodayList: View {
                         actions.skip(instance)
                     }
                 )
-                .presentationCompactAdaptation(.popover)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityAddTraits(.isButton)
@@ -362,16 +360,17 @@ struct MedsTodayList: View {
         meal.time.date(on: day).addingTimeInterval(Double(meal.durationMinutes) * 60)
     }
 
-    /// "Eaten 9:40 AM", or "Eaten 1:30 PM · planned 12:00" when it was more than 10 minutes off.
+    /// "Eaten 9:40 AM" (when she finished), or "Eaten 1:30 PM · planned 12:45" when it was more than
+    /// 10 minutes from the planned end, the same end the menu's "On time" row shows.
     private func eatenCaption(_ log: MealLog, meal: ScheduleMeal) -> String {
         let eaten = "Eaten \(DayList.clock(log.eatenAt))"
-        guard abs(log.eatenAt.timeIntervalSince(mealEnd(meal))) > 600 else { return eaten }
-        return "\(eaten) · planned \(shortClock(log.plannedAt ?? meal.time.date(on: day)))"
+        let end = mealEnd(meal)
+        guard abs(log.eatenAt.timeIntervalSince(end)) > 600 else { return eaten }
+        return "\(eaten) · planned \(shortClock(end))"
     }
 
     private func mealCheck(_ meal: ScheduleMeal, log: MealLog?, entryID: String) -> some View {
         let menuID = "mealcheck-\(entryID)"
-        let isOpen = Binding(get: { logMenu == menuID }, set: { if !$0, logMenu == menuID { logMenu = nil } })
         let planned = mealEnd(meal)
         return MealCheckCircle(done: log != nil)
             .scaleEffect(logMenu == menuID ? 0.9 : 1)
@@ -388,9 +387,10 @@ struct MedsTodayList: View {
                 }
             }
             .onLongPressGesture(minimumDuration: 0.4) { openLogMenu(menuID) }
-            .popover(isPresented: isOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            .anchoredMenu(id: menuID, isPresented: logMenu == menuID, onDismiss: { closeLogMenu(menuID) }) {
                 TakenTimeMenu(
                     planned: planned,
+                    plannedStart: meal.time.date(on: day),
                     question: mealQuestion(meal),
                     wheelLabel: "Finished at",
                     onPick: { time in
@@ -399,7 +399,6 @@ struct MedsTodayList: View {
                         store.logMeal(meal, owner: owner, day: day, at: time)
                     }
                 )
-                .presentationCompactAdaptation(.popover)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityAddTraits(.isButton)
@@ -412,6 +411,10 @@ struct MedsTodayList: View {
         let name = meal.name.lowercased()
         if !store.isShared || owner == store.viewerRole { return "When did you finish \(name)?" }
         return owner == .mom ? "When did she finish \(name)?" : "When did \(store.name(for: owner)) finish \(name)?"
+    }
+
+    private func closeLogMenu(_ entryID: String) {
+        if logMenu == entryID { logMenu = nil }
     }
 
     private func openLogMenu(_ entryID: String) {

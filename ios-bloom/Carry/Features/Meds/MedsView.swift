@@ -194,6 +194,7 @@ struct MedsView: View {
                         .padding(.top, 6)
                     dayList(list)
                 }
+                .anchoredMenuHost()
                 .modifier(RevealRowPanel(proxy: proxy))
                 .onChange(of: scrollRequest) { _, _ in scrollToFocus(proxy) }
                 .onAppear { if scrollRequest > 0 { scrollToFocus(proxy) } }
@@ -208,6 +209,7 @@ struct MedsView: View {
                     status(list)
                     dayList(list)
                 }
+                .anchoredMenuHost()
                 .modifier(RevealRowPanel(proxy: proxy))
                 .carryPullToRefresh { await refresh() }
                 .onChange(of: scrollRequest) { _, _ in scrollToFocus(proxy) }

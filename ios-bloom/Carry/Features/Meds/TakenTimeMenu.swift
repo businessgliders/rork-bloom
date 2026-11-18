@@ -3,16 +3,20 @@ import SwiftUI
 /// Board 18: the small menu anchored to a check circle when the dose is logged away from its planned time.
 /// "On time" (planned, rose tint, first) · "Just now" · "Another time…" (inline full-day wheel with its own confirm).
 /// Tapping outside cancels. A quiet "Skip today" sits at the bottom.
-/// Board 20: the same menu logs a meal (planned = the meal's end, no skip).
+/// Board 20: the same menu logs a meal (planned = the meal's end, no skip). `plannedStart` shows the
+/// "On time" row as the planned span ("7:00–7:45 PM, as planned"); picking it still logs `planned`.
+/// Sized by its host (`anchoredMenu`): fills the width it is given, text wraps, never truncates.
 struct TakenTimeMenu: View {
     var planned: Date
+    var plannedStart: Date?
     var question: String
     var wheelLabel: String = "Taken at"
     var onPick: (Date) -> Void
     var onSkip: (() -> Void)?
 
-    init(planned: Date, question: String, wheelLabel: String = "Taken at", onPick: @escaping (Date) -> Void, onSkip: (() -> Void)? = nil) {
+    init(planned: Date, plannedStart: Date? = nil, question: String, wheelLabel: String = "Taken at", onPick: @escaping (Date) -> Void, onSkip: (() -> Void)? = nil) {
         self.planned = planned
+        self.plannedStart = plannedStart
         self.question = question
         self.wheelLabel = wheelLabel
         self.onPick = onPick
@@ -40,15 +44,18 @@ struct TakenTimeMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(question)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.daySecondary)
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
                 .padding(.bottom, 8)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(spacing: 4) {
                 if planned <= .now {
-                    option(title: "On time", detail: "\(DayList.clock(planned)), as planned",
+                    option(title: "On time", detail: "\(plannedText), as planned",
                            highlighted: true, id: "taken-on-time") { onPick(planned) }
                 }
                 if isToday {
@@ -104,28 +111,35 @@ struct TakenTimeMenu: View {
                 Spacer().frame(height: 8)
             }
         }
-        .frame(width: 264)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.dayCard)
-        .presentationBackground(Theme.dayCard)
+    }
+
+    /// "7:45 PM", or the planned span "7:00 – 7:45 PM" when a start is given.
+    private var plannedText: String {
+        guard let plannedStart, plannedStart < planned else { return DayList.clock(planned) }
+        return (plannedStart..<planned).formatted(.interval.hour().minute())
     }
 
     private func option(title: String, detail: String?, highlighted: Bool, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(highlighted ? Theme.rose : Theme.dayText)
-                Spacer(minLength: 8)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
                         .font(.system(size: 14))
                         .monospacedDigit()
                         .foregroundStyle(highlighted ? Theme.rose.opacity(0.85) : Theme.daySecondary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
-            .frame(minHeight: 46)
+            .padding(.vertical, 8)
+            .frame(minHeight: 52)
             .background(highlighted ? Theme.roseTint : .clear, in: .rect(cornerRadius: 12, style: .continuous))
             .contentShape(.rect)
         }

@@ -178,6 +178,7 @@ enum MedNotifications {
                             content.body = "\(med.shortName) in \(Medication.durationText(med.noFoodBeforeMinutes)). Finish eating now so your tummy is empty."
                         }
                         content.sound = .default
+                        content.userInfo = ["link": "carry://meds"]
                         items.append((pauseAt, request(id: "prefast-\(med.id.uuidString)-\(stamp)", content: content, date: pauseAt)))
                     }
                 }
@@ -196,6 +197,7 @@ enum MedNotifications {
                         content.body = "Your no-food window for \(reasons) is over."
                     }
                     content.sound = .default
+                    content.userInfo = ["link": "carry://meds"]
                     items.append((window.end, request(id: "foodok\(ownerTag)-\(Int(window.end.timeIntervalSince1970))", content: content, date: window.end)))
                 }
             }
@@ -213,7 +215,34 @@ enum MedNotifications {
 /// Shows reminders while Carry is open and handles the "Taken" and "Snooze" actions.
 final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationRouter()
-    weak var store: AppStore?
+    /// Set in `CarryApp.init`. A "Taken" press that arrives before it is set waits in `pendingTaken`.
+    weak var store: AppStore? {
+        didSet { flushPendingTaken() }
+    }
+
+    private struct PendingTaken {
+        var medicationID: UUID
+        var scheduledAt: Date
+        var takenAt: Date
+    }
+    private var pendingTaken: [PendingTaken] = []
+
+    /// Logs the dose now, or queues it until the store exists (cold launch from the action).
+    private func applyTaken(_ item: PendingTaken) {
+        pendingTaken.append(item)
+        flushPendingTaken()
+    }
+
+    private func flushPendingTaken() {
+        guard let store, !pendingTaken.isEmpty else { return }
+        let items = pendingTaken
+        pendingTaken.removeAll()
+        // The widget may have changed the file while Carry was suspended.
+        store.reloadIfChangedExternally()
+        for item in items {
+            store.markTaken(medicationID: item.medicationID, scheduledAt: item.scheduledAt, at: item.takenAt)
+        }
+    }
 
     // Completion-handler versions on purpose: the async versions finish on a background
     // thread, and iOS aborts when the system completion runs off the main thread
@@ -269,15 +298,12 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                     DeepLinkRouter.shared.handleNotification(routed)
                 } else if action == MedNotifications.takenAction,
                           let medIDString, let medID = UUID(uuidString: medIDString),
-                          let stamp,
-                          let store = NotificationRouter.shared.store {
-                    // The widget may have changed the file while Carry was suspended.
-                    store.reloadIfChangedExternally()
-                    store.markTaken(
+                          let stamp {
+                    NotificationRouter.shared.applyTaken(PendingTaken(
                         medicationID: medID,
                         scheduledAt: Date(timeIntervalSince1970: stamp),
-                        at: takenAt
-                    )
+                        takenAt: takenAt
+                    ))
                 }
             }
             completionHandler()
