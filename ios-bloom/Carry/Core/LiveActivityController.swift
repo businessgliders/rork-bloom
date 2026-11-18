@@ -93,7 +93,8 @@ enum LiveActivityController {
             let instances = MedsEngine.instances(on: now, medications: group.medications, logs: store.doseLogs)
             guard let content = LiveActivityContent.make(
                 instances: instances, now: now,
-                carryOver: MedsEngine.carryOver(into: now, medications: group.medications, logs: store.doseLogs)
+                carryOver: MedsEngine.carryOver(into: now, medications: group.medications, logs: store.doseLogs),
+                meals: uneatenMeals(store: store, owner: group.role, now: now)
             ) else {
                 let resolved = instances.filter { !$0.isPending }.count
                 end(mine, takerID: group.takerID, final: .init(dose: nil, otherDueCount: 0, windowStart: nil, windowEnd: nil,
@@ -139,6 +140,17 @@ enum LiveActivityController {
 
         // Activities for people no longer followed, or from before sharing changed.
         end(remaining, takerID: nil, immediately: true)
+    }
+
+    /// Today's routine meals (the day's own set, else the routine's) not logged yet.
+    static func uneatenMeals(store: AppStore, owner: MedOwner, now: Date) -> [LiveActivityContent.MealSlot] {
+        let start = PregnancyMath.calendar.startOfDay(for: now)
+        return store.checkableMeals(owner, on: now).compactMap { kind, meal in
+            guard store.mealLog(owner, on: now, kind: kind) == nil else { return nil }
+            let begins = meal.time.date(on: start)
+            return LiveActivityContent.MealSlot(kind: kind, name: meal.name, start: begins,
+                                                end: begins.addingTimeInterval(Double(meal.durationMinutes) * 60))
+        }
     }
 
     static func endAll() {

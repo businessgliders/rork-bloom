@@ -14,6 +14,13 @@ struct MealLog: Codable, Identifiable, Equatable {
     var updatedAt: Date = .now
 }
 
+/// A meal tapped "Eaten" on the Live Activity while food had to wait, shown as the guard on Meds today.
+struct MealGuardRequest: Equatable {
+    var id = UUID()
+    var owner: MedOwner
+    var kind: MealKind
+}
+
 nonisolated extension SyncOp {
     /// "mom|2026-11-17|lunch"
     static func mealKey(owner: MedOwner, day: Date, kind: MealKind) -> String {
@@ -60,6 +67,33 @@ extension AppStore {
         pruneMealLogs()
         enqueue(.meal, SyncOp.mealKey(owner: owner, day: start, kind: kind))
         replanMeals(owner, on: day)
+    }
+
+    /// "Eaten" on the Live Activity (app closed or open; either phone).
+    /// Logs today's meal of that kind now and re-plans. During a running no-food window nothing is logged:
+    /// a notice opens Meds today with "No food until … Log breakfast anyway?".
+    func eatenFromLiveActivity(owner: MedOwner, kind: MealKind, at time: Date = .now) {
+        guard PregnancyMath.calendar.isDateInToday(time),
+              let meal = checkableMeals(owner, on: time)[kind],
+              mealLog(owner, on: time, kind: kind) == nil else {
+            LiveActivityController.sync(store: self)
+            return
+        }
+        if let alert = activeNoFood(owner, at: time), time >= alert.firstTakenAt, time < alert.end {
+            pendingMealGuard = MealGuardRequest(owner: owner, kind: kind)
+            MedNotifications.postMealGuard(alert, mealName: meal.name, owner: owner, kind: kind)
+            LiveActivityController.sync(store: self)
+            return
+        }
+        logMeal(meal, owner: owner, day: time, at: time)
+    }
+
+    /// Meal taps the widget extension queued, if the system ever ran the intent there.
+    func applyPendingMealTaps() {
+        for tap in PendingMealTaps.take() {
+            guard let owner = MedOwner(rawValue: tap.role), let kind = MealKind(rawValue: tap.meal) else { continue }
+            eatenFromLiveActivity(owner: owner, kind: kind, at: tap.at)
+        }
     }
 
     func undoMeal(_ meal: ScheduleMeal, owner: MedOwner, day: Date) {

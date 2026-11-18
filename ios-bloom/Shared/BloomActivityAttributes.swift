@@ -45,10 +45,58 @@ nonisolated struct BloomActivityAttributes: ActivityAttributes {
         }
     }
 
+    /// The next uneaten meal: due, or starting within 60 min. Never sent while a no-food window runs.
+    /// Dates are Unix seconds, like `DoseRef.scheduledAt`.
+    nonisolated struct MealRef: Codable, Hashable {
+        /// "breakfast", "lunch", "dinner" or "snack".
+        var key: String
+        /// The routine meal's name ("Lunch").
+        var name: String
+        var startAt: Date
+        var endAt: Date
+        /// True once the meal's start has passed.
+        var isDue: Bool
+
+        init(key: String, name: String, startAt: Date, endAt: Date, isDue: Bool) {
+            self.key = key
+            self.name = name
+            self.startAt = startAt
+            self.endAt = endAt
+            self.isDue = isDue
+        }
+
+        private enum CodingKeys: String, CodingKey { case key, name, startAt, endAt, isDue }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = try c.decodeIfPresent(String.self, forKey: .key) ?? "snack"
+            name = try c.decodeIfPresent(String.self, forKey: .name) ?? key.capitalized
+            startAt = try c.decodeUnixDate(forKey: .startAt) ?? .now
+            endAt = try c.decodeUnixDate(forKey: .endAt) ?? startAt.addingTimeInterval(30 * 60)
+            isDue = try c.decodeIfPresent(Bool.self, forKey: .isDue) ?? false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(key, forKey: .key)
+            try c.encode(name, forKey: .name)
+            try c.encode(startAt.timeIntervalSince1970, forKey: .startAt)
+            try c.encode(endAt.timeIntervalSince1970, forKey: .endAt)
+            try c.encode(isDue, forKey: .isDue)
+        }
+
+        /// "Lunch", from the name or, failing that, the key.
+        var title: String {
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? key.capitalized : trimmed
+        }
+    }
+
     /// What becomes true at `staleDate`, so the view stays correct even before the app updates it.
     nonisolated enum StaleReason: String, Codable, Hashable {
         case windowEnds
         case doseDue
+        case mealDue
         case none
     }
 
@@ -63,11 +111,14 @@ nonisolated struct BloomActivityAttributes: ActivityAttributes {
         var resolved: Int
         var total: Int
         var staleReason: StaleReason
+        /// Optional so payloads from before meals still decode.
+        var meal: MealRef?
 
         var hasWindow: Bool { windowStart != nil && windowEnd != nil }
 
         init(dose: DoseRef?, otherDueCount: Int, windowStart: Date?, windowEnd: Date?, windowReason: String?,
-             resolved: Int, total: Int, staleReason: StaleReason) {
+             resolved: Int, total: Int, staleReason: StaleReason, meal: MealRef? = nil) {
+            self.meal = meal
             self.dose = dose
             self.otherDueCount = otherDueCount
             self.windowStart = windowStart
@@ -79,7 +130,7 @@ nonisolated struct BloomActivityAttributes: ActivityAttributes {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case dose, otherDueCount, windowStart, windowEnd, windowReason, resolved, total, staleReason
+            case dose, otherDueCount, windowStart, windowEnd, windowReason, resolved, total, staleReason, meal
         }
 
         init(from decoder: Decoder) throws {
@@ -92,6 +143,7 @@ nonisolated struct BloomActivityAttributes: ActivityAttributes {
             resolved = try c.decodeIfPresent(Int.self, forKey: .resolved) ?? 0
             total = try c.decodeIfPresent(Int.self, forKey: .total) ?? 0
             staleReason = (try? c.decodeIfPresent(StaleReason.self, forKey: .staleReason)) ?? StaleReason.none
+            meal = try? c.decodeIfPresent(MealRef.self, forKey: .meal)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -104,6 +156,7 @@ nonisolated struct BloomActivityAttributes: ActivityAttributes {
             try c.encode(resolved, forKey: .resolved)
             try c.encode(total, forKey: .total)
             try c.encode(staleReason, forKey: .staleReason)
+            try c.encodeIfPresent(meal, forKey: .meal)
         }
     }
 
@@ -160,12 +213,35 @@ nonisolated extension KeyedDecodingContainer {
 }
 
 nonisolated enum LiveActivityContent {
-    /// How long before a dose the Live Activity may appear.
+    /// How long before a dose or meal the Live Activity may appear.
     static let upcomingLead: TimeInterval = 60 * 60
+    /// How long an uneaten meal stays on the card after its planned end.
+    static let mealGrace: TimeInterval = 60 * 60
+
+    /// One of today's routine meals not logged yet.
+    struct MealSlot: Hashable {
+        var kind: MealKind
+        var name: String
+        var start: Date
+        var end: Date
+    }
+
+    /// The meal the card shows: the latest one already started (until a later one starts or it's
+    /// an hour past its end), else the first starting within the hour. None while food has to wait.
+    static func pickMeal(_ meals: [MealSlot], now: Date) -> BloomActivityAttributes.MealRef? {
+        let open = meals.filter { now < $0.end.addingTimeInterval(mealGrace) }.sorted { $0.start < $1.start }
+        let slot = open.last(where: { $0.start <= now })
+            ?? open.first(where: { $0.start > now && $0.start.timeIntervalSince(now) <= upcomingLead })
+        return slot.map {
+            .init(key: $0.kind.rawValue, name: $0.name, startAt: $0.start, endAt: $0.end, isDue: $0.start <= now)
+        }
+    }
 
     /// Builds the content for `now`, or nil when nothing needs a Live Activity
-    /// (no dose due or coming up within the hour, and no confirmed window running).
-    static func make(instances: [DoseInstance], now: Date, carryOver: [DoseInstance] = []) -> (state: BloomActivityAttributes.ContentState, staleDate: Date?)? {
+    /// (no dose or meal due or coming up within the hour, and no confirmed window running).
+    /// `meals` are today's uneaten routine meals for this person.
+    static func make(instances: [DoseInstance], now: Date, carryOver: [DoseInstance] = [],
+                     meals: [MealSlot] = []) -> (state: BloomActivityAttributes.ContentState, staleDate: Date?)? {
         let rn = MedsEngine.rightNow(instances: instances, now: now, carryOver: carryOver)
 
         var window: NoFoodWindow?
@@ -184,7 +260,10 @@ nonisolated enum LiveActivityContent {
             isDue = false
         }
 
-        guard focus != nil || window != nil else { return nil }
+        // No meal while a no-food window runs.
+        let meal = window == nil ? pickMeal(meals, now: now) : nil
+
+        guard focus != nil || window != nil || meal != nil else { return nil }
 
         let dose = focus.map { instance in
             BloomActivityAttributes.DoseRef(
@@ -208,6 +287,10 @@ nonisolated enum LiveActivityContent {
             staleDate = focus.scheduledAt
             reason = .doseDue
         }
+        if let meal, !meal.isDue, staleDate == nil || meal.startAt < staleDate! {
+            staleDate = meal.startAt
+            reason = .mealDue
+        }
 
         let state = BloomActivityAttributes.ContentState(
             dose: dose,
@@ -217,7 +300,8 @@ nonisolated enum LiveActivityContent {
             windowReason: window?.reasons.joined(separator: " & "),
             resolved: rn.resolvedToday,
             total: rn.totalToday,
-            staleReason: reason
+            staleReason: reason,
+            meal: meal
         )
         return (state, staleDate)
     }

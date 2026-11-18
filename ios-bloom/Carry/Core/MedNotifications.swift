@@ -219,6 +219,18 @@ enum MedNotifications {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// "Eaten" was pressed on the Live Activity while food has to wait. Tapping opens the meal guard.
+    static func postMealGuard(_ alert: NoFoodAlert, mealName: String, owner: MedOwner, kind: MealKind) {
+        let content = UNMutableNotificationContent()
+        content.title = "No food until \(alert.end.formatted(date: .omitted, time: .shortened)) (\(alert.namesText))"
+        content.body = "\(mealName) wasn't logged. Log \(mealName.lowercased()) anyway?"
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
+        content.userInfo = ["link": "carry://mealguard?owner=\(owner.rawValue)&meal=\(kind.rawValue)"]
+        let request = UNNotificationRequest(identifier: "mealguard-\(owner.rawValue)-\(kind.rawValue)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
     /// "30 minutes", "1 minute", "1 h 30 min".
     static func spokenDuration(_ minutes: Int) -> String {
         if minutes < 60 { return minutes == 1 ? "1 minute" : "\(minutes) minutes" }

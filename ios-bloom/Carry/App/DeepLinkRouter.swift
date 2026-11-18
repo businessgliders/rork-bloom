@@ -27,6 +27,18 @@ final class DeepLinkRouter {
             openMeds()
             AppStore.shared.showNoFoodAlertIfActive()
             return true
+        case "mealguard":
+            // "Eaten" during a no-food window: Meds today with "Log breakfast anyway?" on that meal.
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let value = { (name: String) in items.first { $0.name == name }?.value?.lowercased() }
+            let store = AppStore.shared
+            if let owner = value("owner").flatMap(MedOwner.init(rawValue:)),
+               let kind = value("meal").flatMap(MealKind.init(rawValue:)),
+               store.pendingMealGuard?.owner != owner || store.pendingMealGuard?.kind != kind {
+                store.pendingMealGuard = MealGuardRequest(owner: owner, kind: kind)
+            }
+            openMeds()
+            return true
         case "dailynote", "note":
             DailyNoteCenter.shared.openFromNotification()
             return true

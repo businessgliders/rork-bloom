@@ -215,6 +215,7 @@ struct MedsTodayList: View {
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.85),
                    value: store.mealClashes[owner]?.map(\.id) ?? [])
         .accessibilityIdentifier("meds-day-list")
+        .task(id: store.pendingMealGuard?.id) { await applyPendingMealGuard() }
         .onAppear {
             // Rows fade and rise once per launch, not on every tab switch.
             guard !appeared else { return }
@@ -432,6 +433,23 @@ struct MedsTodayList: View {
         mealGuard = nil
         Haptics.success()
         store.logMeal(meal, owner: owner, day: day, at: time)
+    }
+
+    /// "Eaten" pressed on the Live Activity during a no-food window: the same guard, on that meal.
+    private func applyPendingMealGuard() async {
+        guard let request = store.pendingMealGuard, request.owner == owner, isToday, canLog else { return }
+        store.pendingMealGuard = nil
+        guard let meal = store.checkableMeals(owner, on: day)[request.kind], mealLogFor(meal) == nil,
+              let alert = store.activeNoFood(owner), Date.now < alert.end else { return }
+        let entryID = "meal-\(meal.id)"
+        picker = nil
+        logMenu = nil
+        closeDoseMove()
+        mealGuard = MealGuard(entryID: entryID, meal: meal, time: .now, alert: alert)
+        Haptics.warning()
+        // After the link's own scroll to the current dose.
+        try? await Task.sleep(for: .milliseconds(700))
+        revealInScroll?(entryID)
     }
 
     private func guardCard(_ item: MealGuard) -> some View {

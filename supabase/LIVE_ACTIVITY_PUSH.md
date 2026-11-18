@@ -71,7 +71,20 @@ Content state (`content-state`):
 - `windowReason`: string, optional, e.g. `"Iron"` or `"Iron & Thyroid"`
 - `resolved`: int. Doses taken or skipped today for this taker.
 - `total`: int. Doses scheduled today for this taker.
-- `staleReason`: string, `"windowEnds"`, `"doseDue"` or `"none"`. What becomes true at `stale-date`.
+- `staleReason`: string, `"windowEnds"`, `"doseDue"`, `"mealDue"` or `"none"`. What becomes true at `stale-date`.
+- `meal`: object, optional. The next routine meal not logged today, sent only when it has started (until 60 min
+  after its end) or starts within 60 min, and **never while a no-food window runs**. A meal alone keeps the activity alive.
+  - `key`: string, `"breakfast"`, `"lunch"`, `"dinner"` or `"snack"` (the Eaten button sends it back)
+  - `name`: string, the meal's name from the routine, e.g. `"Lunch"`
+  - `startAt`: number (Unix seconds), planned start
+  - `endAt`: number (Unix seconds), planned end
+  - `isDue`: bool. True once `startAt` has passed. When false, set `stale-date` to `startAt` (or the earlier dose/window
+    time) with `staleReason: "mealDue"` if the meal is the earliest.
+
+The card picks its main row on the phone: a due dose first, else the no-food window, else whichever of the meal and
+upcoming dose comes first; the other appears as a "Then …" line. Tapping Eaten logs `meal_logs` for today
+(`eaten_at` = now, `planned_at` = the meal's start) on the taker's phone or the partner's, syncs, and updates the
+activity. Meals never trigger a partner alert. Send a fresh update to both people's activities after a `meal_logs` change.
 
 Missing optional fields decode as absent; missing ints decode as 0.
 

@@ -223,6 +223,8 @@ final class AppStore {
     var undoToast: UndoToast?
     /// The no-food countdown card (app-wide), set when she logs a dose that starts a no-food window.
     var noFoodAlert: NoFoodAlert?
+    /// "Eaten" was pressed on the Live Activity during a no-food window: Meds today asks first.
+    var pendingMealGuard: MealGuardRequest?
     /// Bumped by "Delete all my data" so screens rebuild from scratch instead of keeping open editors.
     var resetGeneration = 0
 
@@ -1187,11 +1189,13 @@ final class AppStore {
     /// Re-reads the shared file if another process (widget, intent) changed it.
     func reloadIfChangedExternally() {
         let date = SharedStateFile.modificationDate()
-        guard date != knownFileDate else { return }
-        load()
-        now = .now
-        // An intent outside the app may have queued a dose.
-        if !pendingOps.isEmpty { SyncEngine.shared.scheduleFlush() }
+        if date != knownFileDate {
+            load()
+            now = .now
+            // An intent outside the app may have queued a dose.
+            if !pendingOps.isEmpty { SyncEngine.shared.scheduleFlush() }
+        }
+        applyPendingMealTaps()
     }
 
     private func load() {
