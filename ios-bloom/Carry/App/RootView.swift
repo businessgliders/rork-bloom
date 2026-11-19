@@ -89,6 +89,21 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.22), value: notes.presentation?.id)
+        .overlay(alignment: .top) {
+            // A late dose moved the next one by itself: a quiet card at the top, after any popup.
+            if let notice = store.autoMoveNotice, notesReady, store.noFoodAlert == nil,
+               store.celebration == nil, notes.presentation == nil {
+                AutoMoveBanner(notice: notice,
+                               onUndo: { store.undoAutoMove(notice.id) },
+                               onDismiss: { store.dismissAutoMoveNotice() })
+                    .id(notice.id)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.42, dampingFraction: 0.86),
+                   value: store.autoMoveNotice?.id)
         .onChange(of: notesReady, initial: true) { _, ready in notes.rootReady = ready }
         .overlay {
             if showSplash {

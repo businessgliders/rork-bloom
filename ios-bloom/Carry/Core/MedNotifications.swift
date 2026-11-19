@@ -223,6 +223,20 @@ enum MedNotifications {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// Not "dose-": that prefix is swept as stale when a dose isn't planned any more.
+    static func doseMovedID(_ id: UUID) -> String { "moved-\(id.uuidString)" }
+
+    /// A late dose moved the next one (a gap rule across midnight). Quiet: no sound, no buzz.
+    static func postDoseMoved(id: UUID, title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.interruptionLevel = .passive
+        content.userInfo = ["link": "carry://meds"]
+        let request = UNNotificationRequest(identifier: doseMovedID(id), content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
     /// "Eaten" was pressed on the Live Activity while food has to wait. Tapping opens the meal guard.
     static func postMealGuard(_ alert: NoFoodAlert, mealName: String, owner: MedOwner, kind: MealKind) {
         let content = UNMutableNotificationContent()

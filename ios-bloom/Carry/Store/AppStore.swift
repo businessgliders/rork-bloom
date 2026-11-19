@@ -221,6 +221,11 @@ final class AppStore {
     /// Set when a slot is completed by the user's action; the Meds tab presents the celebration.
     var celebration: SlotCelebration?
     var undoToast: UndoToast?
+    /// A dose moved by itself because last night's dose was late (AppStore+LateDoseMoves.swift). Shown until dismissed.
+    var autoMoveNotice: AutoMoveNotice? = AutoMoveNotice.loadSaved() {
+        didSet { AutoMoveNotice.save(autoMoveNotice) }
+    }
+    @ObservationIgnored var isAutoMoving = false
     /// The no-food countdown card (app-wide), set when she logs a dose that starts a no-food window.
     var noFoodAlert: NoFoodAlert?
     /// "Eaten" was pressed on the Live Activity during a no-food window: Meds today asks first.
@@ -250,6 +255,7 @@ final class AppStore {
     private init() {
         SharedStateFile.migrateLegacyFileIfNeeded()
         load()
+        if normalizeGapRules() { save() }
     }
 
     var isOnboarded: Bool { onboardingComplete && profile != nil }
@@ -1196,6 +1202,8 @@ final class AppStore {
         if date != knownFileDate {
             load()
             now = .now
+            // A dose logged from the widget may push tomorrow's dose (a gap rule across midnight).
+            if autoMoveLateDoses() { saveAndReschedule() }
             // An intent outside the app may have queued a dose.
             if !pendingOps.isEmpty { SyncEngine.shared.scheduleFlush() }
         }
@@ -1231,6 +1239,8 @@ final class AppStore {
 
     /// The one place med changes fan out: file, notifications, widgets, Live Activity, Reminders.
     func saveAndReschedule(syncReminders: Bool = true) {
+        // Any dose logged (here, on the other phone, from a widget or a notification) can push the next dose.
+        autoMoveLateDoses()
         refreshMealClashes()
         save()
         MedNotifications.reschedule(store: self)
@@ -1241,7 +1251,10 @@ final class AppStore {
     /// Refreshes everything time-based (on launch / foreground) so rolling windows stay filled.
     func refreshReminders() {
         // A new day: keep the plan filled for today and the next 7 days.
-        if rebuildPlan() { save() }
+        var changed = rebuildPlan()
+        // Opening on a new day: last night's real dose times can move this morning's dose.
+        if autoMoveLateDoses() { changed = true }
+        if changed { save() }
         MedNotifications.reschedule(store: self)
         LiveActivityController.sync(store: self)
         RemindersSync.shared.sync(store: self)

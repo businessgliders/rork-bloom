@@ -81,6 +81,7 @@ nonisolated enum LineParseService {
     - meds: every medication named in the line. Use the exact Known name when it matches (case-insensitive); else the name as written, without "the"/"my". dose only if literally written, else "". time only for an exact clock time written.
     - subject/target: med names from meds. target is a meal name ("breakfast","lunch","dinner","snack") for meal, else null.
     - Minutes: "as soon as I wake" = at wake 0. "30 min after waking" = after wake 30. "no food for 30 min after" = before food 30. "no food 1 h before" = after food 60. "no food 1 h before or after" = apart food 60. "with lunch" = with meal lunch. "with food" = with food. "X 4 h after Y" = X after medication Y 240. "X and Y 2 h apart" = X apart medication Y 120. "X with Y" (Y a medication) = X with medication Y 0. "before bed" = before bed 0. "at bedtime" = at bed 0. "first thing in the morning" = at wake 0. "30 minutes afterwards I can't have any food" = before food 30. "cannot have food 2 hours before" = after food 120. "or 1 hour afterwards" (food) = before food 60. "within 1 hour after dinner" = after meal dinner min 0 max 60. "approximately 10 to 12 hours apart from Y" = apart medication Y min 600 max 720. "at least 4 hours after taking Y" = after medication Y 240.
+    - One number is a minimum: "X 10 hours apart from Y" = min 600, max null. Set max only for a range or a limit: "10 to 12 hours" = min 600 max 720, "exactly 10 hours" = min 600 max 600, "no more than 10 hours" = max 600.
     - Only rules actually written. Empty arrays if none.
     - If Line has a rule but doesn't say which medication it is about ("30 min afterwards no food", "or 1 hour after", "apart from X" with no other medication), use the medication from Context as subject and include it in meds (Context "Iron", Line "at least 4 hours after taking the thyroid" = Iron after medication Thyroid 240). Without Context, leave those rules out and set "needsContext":true. Never parse Context's own rules.
     """
@@ -285,7 +286,17 @@ nonisolated enum LineParseService {
             if relation == "apart", (rule.min ?? 0) == 0 { return true }
             return onlyAsTarget(rule.subject)
         }
+        // One number means "at least": a max equal to the min only stays when the line says "exactly" or sets a limit.
+        for i in out.rules.indices {
+            if let lo = out.rules[i].min, let hi = out.rules[i].max, lo == hi, lo > 0, !statesLimit(line) { out.rules[i].max = nil }
+        }
         return out
+    }
+
+    /// "exactly 10 hours", "no more than 2 h", "within 1 hour": the line sets an upper limit, not only a minimum.
+    static func statesLimit(_ line: String) -> Bool {
+        let pattern = #"(?i)\b(exactly|precisely|no more than|not more than|no longer than|at most|up to|within|maximum|max|or less|no later than)\b"#
+        return line.range(of: pattern, options: .regularExpression) != nil
     }
 
     /// One request; `attempt` 0 uses the fast model, the retry uses the fallback (the server picks the model).
@@ -451,7 +462,17 @@ final class LineParser {
            let stored = try? JSONDecoder().decode([Entry].self, from: data) {
             for entry in stored { cache[entry.line] = entry.parse; cacheOrder.append(entry.line) }
         }
+        // Once: "apart" lines were read with max = min ("10 hours apart" as exactly 10 h). Read them again.
+        if let defaults, !defaults.bool(forKey: Self.apartClearedKey) {
+            let stale = cacheOrder.filter { $0.lowercased().contains("apart") }
+            for key in stale { cache[key] = nil }
+            cacheOrder.removeAll { stale.contains($0) }
+            defaults.set(true, forKey: Self.apartClearedKey)
+            if !stale.isEmpty { persist() }
+        }
     }
+
+    private static let apartClearedKey = "bloom.lineParseCache.apartCleared.v1"
 
     private struct Entry: Codable { var line: String; var parse: LineParse }
 

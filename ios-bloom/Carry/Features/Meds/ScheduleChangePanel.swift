@@ -12,6 +12,9 @@ struct ScheduleChangePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            if let notice = change.followOn {
+                followOnLine(notice)
+            }
             if change.needsDecision {
                 problemContent
             } else {
@@ -56,6 +59,34 @@ struct ScheduleChangePanel: View {
         case .rule: return "\(change.subjectName) · new times"
         case .shift: return "Keep these times?"
         }
+    }
+
+    /// Tomorrow's dose already moved by itself (a gap rule across midnight): its own line, with Undo.
+    private func followOnLine(_ notice: AutoMoveNotice) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.rose)
+            Text(notice.message)
+                .font(.bloom(.footnote, weight: .semibold))
+                .foregroundStyle(Theme.rose)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Undo") {
+                Haptics.select()
+                store.undoAutoMove(notice.id)
+            }
+            .font(.bloom(.footnote, weight: .semibold))
+            .foregroundStyle(Theme.rose)
+            .frame(minHeight: 32)
+            .accessibilityIdentifier("change-followon-undo")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Theme.roseTint, in: .rect(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("change-followon")
+        .transition(.opacity)
     }
 
     // MARK: Rules broken

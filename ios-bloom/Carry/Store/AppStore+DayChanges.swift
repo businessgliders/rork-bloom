@@ -89,6 +89,8 @@ struct ScheduleChange: Identifiable, Equatable {
     var shift = 0
     /// Shift my day: she tapped Done, so the Just today / Every day choice shows.
     var asked = false
+    /// A late dose also moved tomorrow's dose: one more line in this panel instead of a second popup.
+    var followOn: AutoMoveNotice?
 
     /// Rules are being added or changed: she confirms they match her doctor or pharmacist first.
     var needsConfirmation: Bool { kind == .rule && !confirmed }
@@ -208,7 +210,9 @@ extension AppStore {
         guard let yesterday = cal.date(byAdding: .day, value: -1, to: start) else { return [:] }
         var result: [UUID: [Int]] = [:]
         for item in instances(on: yesterday) where item.medication.owner == owner && item.medication.managed && !item.isSkipped {
-            result[item.medication.id, default: []].append(Int(item.anchor.timeIntervalSince(start) / 60))
+            // To the app's 5-minute step, like every planned time (11:46 PM counts as 11:45 PM).
+            let m = Int((item.anchor.timeIntervalSince(start) / 60).rounded())
+            result[item.medication.id, default: []].append(ScheduleEngine.roundNearest(m))
         }
         return result
     }
@@ -651,14 +655,21 @@ extension AppStore {
     // MARK: - Late logging
 
     /// After a dose is logged: if the real time moves later doses or breaks a rule, ask inline.
+    /// Tomorrow is always checked too (when the log was saved): a late evening dose moves tomorrow's dose by itself.
+    /// When today's panel is showing, that move is one more line in it rather than a separate banner.
     func proposeAfterLogging(_ instance: DoseInstance, placement: ScheduleChange.Placement) {
         let med = instance.medication
-        guard med.managed, PregnancyMath.calendar.isDateInToday(instance.scheduledAt) else { return }
-        if proposeDayChange(owner: med.owner, day: instance.scheduledAt, edit: .logged(med.id), placement: placement) != nil { return }
-        // Nothing moves today: a late evening dose can still push tomorrow morning (a gap rule across midnight).
-        guard let tomorrow = PregnancyMath.calendar.date(byAdding: .day, value: 1, to: PregnancyMath.calendar.startOfDay(for: instance.scheduledAt))
-        else { return }
-        proposeDayChange(owner: med.owner, day: tomorrow, edit: .logged(med.id), placement: placement, nextDay: true)
+        guard med.managed else { return }
+        if PregnancyMath.calendar.isDateInToday(instance.scheduledAt) {
+            proposeDayChange(owner: med.owner, day: instance.scheduledAt, edit: .logged(med.id), placement: placement)
+        }
+        if autoMoveLateDoses() { saveAndReschedule() }
+        if var change = scheduleChange, let notice = autoMoveNotice, notice.owner == change.owner,
+           Date.now.timeIntervalSince(notice.createdAt) < 10 {
+            change.followOn = notice
+            scheduleChange = change
+            autoMoveNotice = nil
+        }
     }
 
     // MARK: - Routines for a day
