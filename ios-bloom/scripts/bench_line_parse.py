@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.request
 
-SYSTEM = open(os.path.join(os.path.dirname(__file__), "line_parse_prompt.txt")).read().strip()
+SYSTEM = "\n".join(l for l in open(os.path.join(os.path.dirname(__file__), "line_parse_prompt.txt")).read().splitlines() if not l.startswith("# ")).strip()
 
 LINES = [
     "Thyroid as soon as I wake up, no food for 30 min after.",

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Supabase
 
 // MARK: - What one line says
 
@@ -33,10 +34,37 @@ nonisolated struct LineParse: Codable, Equatable, Sendable {
 nonisolated enum LineParseError: Error, Equatable {
     case notConfigured
     case unreadable
+    /// The AI service said no (out of credits, rate limited) or can't be reached (offline).
+    case unavailable
+    /// No answer in time; the retry (attempt 1) uses the stronger model with a longer wait.
+    case timedOut
+    /// The function failed upstream (502); retried like a timeout.
+    case server
+
+    /// Shown under the line. Both end with "Tap to try again"; callers don't add it.
+    static let unavailableMessage = "Reading isn't available right now. Tap to try again."
+    static let unreadableMessage = "Couldn't read this line. Tap to try again."
+
+    @MainActor
+    static func message(for error: Error) -> String {
+        switch error as? LineParseError {
+        case .notConfigured, .unavailable: return unavailableMessage
+        default:
+            if let proxy = error as? ProxyError {
+                switch proxy {
+                case .insufficientBalance, .rateLimited, .authError: return unavailableMessage
+                default: break
+                }
+            }
+            return Backend.isNetworkError(error) ? unavailableMessage : unreadableMessage
+        }
+    }
 }
 
-/// Parses one line at a time through the Rork AI proxy. The AI only reads; `ScheduleEngine` places times.
-/// Prompt mirrors `scripts/line_parse_prompt.txt`, which `scripts/bench_line_parse.py` benchmarks.
+/// Parses one line at a time through the Supabase function `parse-line` (signed in), or the Rork AI proxy
+/// (local-only mode). The AI only reads; `ScheduleEngine` places times.
+/// The live prompt lives in `supabase/functions/parse-line`; `systemPrompt` below and
+/// `scripts/line_parse_prompt.txt` are the reference copy used by the proxy fallback and the benchmark.
 nonisolated enum LineParseService {
     /// Fastest model that passed the line tests (median 1.9 s for five lines in parallel, 2026-11-15).
     static let model = "deepseek/deepseek-v4.1-flash-1017-ultrafast"
@@ -86,7 +114,7 @@ nonisolated enum LineParseService {
     }
 
     /// Strict, defensive decoding: unknown relations and empty names are dropped later by the assembler.
-    static func decode(_ content: String) throws -> LineParse {
+    static func decode(_ content: String, context: [String] = []) throws -> LineParse {
         guard let start = content.firstIndex(of: "{"), let end = content.lastIndex(of: "}"), start < end,
               let data = String(content[start...end]).data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -131,6 +159,16 @@ nonisolated enum LineParseService {
                                                min: minutes(raw["min"]), max: minutes(raw["max"])))
         }
         result.needsContext = (json["needsContext"] as? Bool) ?? false
+        // Read with context, the model sometimes gives the rule the medication above as subject but leaves it out
+        // of meds. A subject the context lines name is the medication the line borrows: list it.
+        let contextText = context.joined(separator: "\n").lowercased()
+        if !contextText.isEmpty {
+            for rule in result.rules
+            where contextText.contains(rule.subject.lowercased())
+                && !result.meds.contains(where: { $0.name.caseInsensitiveCompare(rule.subject) == .orderedSame }) {
+                result.meds.insert(LineParse.Med(name: rule.subject), at: 0)
+            }
+        }
         // A rule's subject must be one of the line's medications; otherwise the model guessed one.
         let medNames = Set(result.meds.map { $0.name.lowercased() })
         result.rules.removeAll { !medNames.contains($0.subject.lowercased()) }
@@ -250,9 +288,87 @@ nonisolated enum LineParseService {
         return out
     }
 
-    /// One request; `attempt` 0 uses the fast model, the retry uses the fallback.
+    /// One request; `attempt` 0 uses the fast model, the retry uses the fallback (the server picks the model).
+    /// Signed in: the `parse-line` function. Local-only: the Rork proxy if this build has it.
     @MainActor
     static func liveTransport(line: String, context: [String], known: [String], attempt: Int) async throws -> String {
+        guard SyncEngine.shared.isSignedIn else {
+            return try await proxyTransport(line: line, context: context, known: known, attempt: attempt)
+        }
+        let body = ParseLineRequest(line: line, context: context, known: known, attempt: attempt)
+        let seconds = attempt == 0 ? timeout : fallbackTimeout
+        do {
+            return try await withTimeout(seconds) { try await invokeParseLine(body) }
+        } catch FunctionsError.httpError(let code, _) where code == 401 {
+            // Expired session: refresh once and ask again.
+            do { _ = try await Backend.client.auth.refreshSession() } catch { throw LineParseError.unavailable }
+            return try await withTimeout(seconds) { try await invokeParseLine(body) }
+        }
+    }
+
+    nonisolated struct ParseLineRequest: Encodable, Sendable {
+        let line: String
+        let context: [String]
+        let known: [String]
+        let attempt: Int
+    }
+
+    nonisolated struct ParseLineResponse: Decodable, Sendable {
+        let content: String
+        let ms: Int?
+    }
+
+    @MainActor
+    private static func invokeParseLine(_ body: ParseLineRequest) async throws -> String {
+        do {
+            let reply: ParseLineResponse = try await Backend.client.functions.invoke(
+                "parse-line", options: FunctionInvokeOptions(body: body)
+            ) { data, _ in try JSONDecoder().decode(ParseLineResponse.self, from: data) }
+            #if DEBUG
+            if let ms = reply.ms { NSLog("%@", "[LineParse] parse-line attempt \(body.attempt) \(ms) ms") }
+            #endif
+            guard !reply.content.isEmpty else { throw LineParseError.unreadable }
+            return reply.content
+        } catch FunctionsError.httpError(let code, let data) {
+            let text = String(data: data, encoding: .utf8)?.lowercased() ?? ""
+            NSLog("%@", "[LineParse] parse-line \(code): \(text.prefix(200))")
+            switch code {
+            case 401: throw FunctionsError.httpError(code: code, data: data)
+            case 503 where text.contains("not_configured"): throw LineParseError.notConfigured
+            case 402, 429: throw LineParseError.unavailable
+            default:
+                // The function passes upstream refusals through in its error text.
+                if ["credit", "insufficient", "balance", "rate", "402", "429", "quota"].contains(where: text.contains) {
+                    throw LineParseError.unavailable
+                }
+                if code == 503 { throw LineParseError.notConfigured }
+                throw LineParseError.server
+            }
+        } catch let error where Backend.isNetworkError(error) && !(error is CancellationError) {
+            if (error as? URLError)?.code == .timedOut { throw LineParseError.timedOut }
+            if (error as? URLError)?.code == .cancelled { throw CancellationError() }
+            throw LineParseError.unavailable
+        }
+    }
+
+    /// Runs `operation`, giving up with `.timedOut` after `seconds`.
+    static func withTimeout<T: Sendable>(_ seconds: TimeInterval,
+                                         _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw LineParseError.timedOut
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw LineParseError.timedOut }
+            return first
+        }
+    }
+
+    /// The old path through the Rork AI proxy, kept for local-only mode.
+    @MainActor
+    static func proxyTransport(line: String, context: [String], known: [String], attempt: Int) async throws -> String {
         let base = Config.EXPO_PUBLIC_TOOLKIT_URL
         let secret = Config.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY
         guard !base.isEmpty, !secret.isEmpty, let url = URL(string: "\(base)/v2/vercel/v1/chat/completions") else {
@@ -277,7 +393,12 @@ nonisolated enum LineParseService {
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = attempt == 0 ? timeout : fallbackTimeout
-        let (data, _) = try await sendWithRetry(request, maxAttempts: 1)
+        let data: Data
+        do {
+            (data, _) = try await sendWithRetry(request, maxAttempts: 1)
+        } catch ProxyError.insufficientBalance, ProxyError.rateLimited, ProxyError.authError {
+            throw LineParseError.unavailable
+        }
         struct ChatResponse: Decodable {
             struct Choice: Decodable {
                 struct Message: Decodable { let content: String? }
@@ -317,7 +438,7 @@ final class LineParser {
     @ObservationIgnored private var cacheOrder: [String] = []
     @ObservationIgnored private let transport: Transport
     @ObservationIgnored private let defaults: UserDefaults?
-    private static let cacheKey = "bloom.lineParseCache.v8"
+    private static let cacheKey = "bloom.lineParseCache.v9"
     private static let cacheLimit = 300
     /// At most this many lines above are sent as context.
     static let maxContextLines = 4
@@ -435,13 +556,13 @@ final class LineParser {
                         #if DEBUG
                         NSLog("%@", "[LineParse] reply \(request.context.isEmpty ? "alone" : "ctx") · \(request.line.prefix(30)) → \(reply.prefix(400))")
                         #endif
-                        let parse = try LineParseService.decode(reply)
+                        let parse = try LineParseService.decode(reply, context: request.context)
                         // Given the medication above, a follow-on line should yield a rule. If the fast model still
                         // found none, ask the fallback once.
                         if !request.context.isEmpty,
                            LineParseService.validated(LineParseService.restoreTimeOfDay(parse, line: request.line, context: request.context), line: request.line).rules.isEmpty {
                             NSLog("%@", "[LineParse] no rule with context, asking the fallback · \(request.line.prefix(40))")
-                            if let second = try? LineParseService.decode(try await transport(request.line, request.context, known, 1)) {
+                            if let second = try? LineParseService.decode(try await transport(request.line, request.context, known, 1), context: request.context) {
                                 return (request, .success(second))
                             }
                         }
@@ -451,7 +572,7 @@ final class LineParser {
                     } catch {
                         NSLog("%@", "[LineParse] attempt 0 failed: \(error) · \(request.line.prefix(40))")
                         do {
-                            return (request, .success(try LineParseService.decode(try await transport(request.line, request.context, known, 1))))
+                            return (request, .success(try LineParseService.decode(try await transport(request.line, request.context, known, 1), context: request.context)))
                         } catch {
                             NSLog("%@", "[LineParse] attempt 1 failed: \(error) · \(request.line.prefix(40))")
                             return (request, .failure(error))
@@ -473,9 +594,7 @@ final class LineParser {
                 store(parse, for: request.key)
             case .failure(let error):
                 if !(error is CancellationError) {
-                    failed[request.line] = (error as? LineParseError) == .notConfigured
-                        ? "Reading isn't available right now."
-                        : "Couldn't read this line. Tap to try again."
+                    failed[request.line] = LineParseError.message(for: error)
                 }
             }
         }

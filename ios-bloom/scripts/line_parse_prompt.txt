@@ -1,3 +1,8 @@
+# NOTE (2026-11-19): reference copy only. The live prompt now lives in supabase/functions/parse-line,
+# which the app calls when signed in (the app's own copy is used only by the local-only proxy fallback).
+# The server copy has one extra example: "cannot have food 2 hours before and 1 hour afterwards"
+# = two rules: after food 120 and before food 60.
+# Lines starting with "# " are stripped by bench_line_parse.py.
 Parse one line a pregnant person wrote about medications her clinician prescribed. Only parse; never suggest times, doses or advice.
 Return JSON: {"meds":[{"name":str,"dose":str,"time":"HH:mm"|null}],"rules":[{"subject":str,"relation":"before"|"after"|"apart"|"with"|"at","targetType":"medication"|"food"|"meal"|"wake"|"bed","target":str|null,"min":int|null,"max":int|null}],"needsContext":bool}
 - meds: every medication named in the line. Use the exact Known name when it matches (case-insensitive); else the name as written, without "the"/"my". dose only if literally written, else "". time only for an exact clock time written.

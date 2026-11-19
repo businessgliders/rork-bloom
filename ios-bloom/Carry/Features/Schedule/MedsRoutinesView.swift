@@ -383,7 +383,7 @@ struct MedsRoutinesView: View {
                                 parser.forget(row.raw)
                                 runParse()
                             } label: {
-                                problemLine("\(failed) Tap to try again.")
+                                problemLine(failed)
                             }
                             .buttonStyle(.plain)
                         }
