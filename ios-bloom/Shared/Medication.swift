@@ -119,6 +119,12 @@ nonisolated enum MedSchedule: Codable, Hashable {
         }
     }
 
+    /// "Tue, Thu" for a med taken on some days only; nil when it is taken every day.
+    var daysNote: String? {
+        if case .weekdays(let days) = self, !days.isEmpty, days.count < 7 { return summary }
+        return nil
+    }
+
     /// Weekdays in the user's locale order (Monday-first in most regions).
     static var weekdayOrder: [Int] {
         let first = PregnancyMath.calendar.firstWeekday

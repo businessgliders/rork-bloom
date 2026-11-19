@@ -935,7 +935,14 @@ final class AppStore {
         for row in remote.medications {
             seenMeds.insert(row.id)
             if hasPendingOp(.medication, row.id.uuidString) {
-                if let local = localMeds[row.id] { newMeds.append(local) }
+                if var local = localMeds[row.id] {
+                    // Days are only ever set from her lines (always as days), so a local "every day" is an old
+                    // copy that never had days: the server's days win and the upload carries them.
+                    if local.schedule == .daily, row.schedule_type == "specific_days", let days = row.days_of_week, !days.isEmpty {
+                        local.schedule = .weekdays(Set(days.map { $0 + 1 }))
+                    }
+                    newMeds.append(local)
+                }
                 continue
             }
             let role = remote.members.first(where: { $0.userID == row.taken_by })?.role ?? .mom

@@ -10,6 +10,17 @@ nonisolated struct LineParse: Codable, Equatable, Sendable {
         var name: String
         var dose: String = ""
         var time: DoseTime?
+        /// Days of the week the line says it's taken, 0 = Sunday … 6 = Saturday. nil = every day (or not said).
+        var days: [Int]?
+
+        /// The days as a `MedSchedule` (1 = Sunday), or nil when the line doesn't name days.
+        var schedule: MedSchedule? {
+            guard let days, !days.isEmpty else { return nil }
+            let set = Set(days.filter { (0...6).contains($0) }.map { $0 + 1 })
+            guard !set.isEmpty else { return nil }
+            // Kept as days even for all seven, so it always replaces an older copy (see the remote merge).
+            return .weekdays(set)
+        }
     }
     struct Rule: Codable, Equatable, Sendable {
         var subject: String
@@ -77,8 +88,8 @@ nonisolated enum LineParseService {
 
     static let systemPrompt = """
     Parse one line a pregnant person wrote about medications her clinician prescribed. Only parse; never suggest times, doses or advice.
-    Return JSON: {"meds":[{"name":str,"dose":str,"time":"HH:mm"|null}],"rules":[{"subject":str,"relation":"before"|"after"|"apart"|"with"|"at","targetType":"medication"|"food"|"meal"|"wake"|"bed","target":str|null,"min":int|null,"max":int|null}],"needsContext":bool}
-    - meds: every medication named in the line. Use the exact Known name when it matches (case-insensitive); else the name as written, without "the"/"my". dose only if literally written, else "". time only for an exact clock time written.
+    Return JSON: {"meds":[{"name":str,"dose":str,"time":"HH:mm"|null,"days":[int]|null}],"rules":[{"subject":str,"relation":"before"|"after"|"apart"|"with"|"at","targetType":"medication"|"food"|"meal"|"wake"|"bed","target":str|null,"min":int|null,"max":int|null}],"needsContext":bool}
+    - meds: every medication named in the line. Use the exact Known name when it matches (case-insensitive); else the name as written, without "the"/"my". dose only if literally written, else "". time only for an exact clock time written. days only when the line names days of the week, 0=Sunday..6=Saturday ("every Tuesday & Thursday" = [2,4]); else null.
     - subject/target: med names from meds. target is a meal name ("breakfast","lunch","dinner","snack") for meal, else null.
     - Minutes: "as soon as I wake" = at wake 0. "30 min after waking" = after wake 30. "no food for 30 min after" = before food 30. "no food 1 h before" = after food 60. "no food 1 h before or after" = apart food 60. "with lunch" = with meal lunch. "with food" = with food. "X 4 h after Y" = X after medication Y 240. "X and Y 2 h apart" = X apart medication Y 120. "X with Y" (Y a medication) = X with medication Y 0. "before bed" = before bed 0. "at bedtime" = at bed 0. "first thing in the morning" = at wake 0. "30 minutes afterwards I can't have any food" = before food 30. "cannot have food 2 hours before" = after food 120. "or 1 hour afterwards" (food) = before food 60. "within 1 hour after dinner" = after meal dinner min 0 max 60. "approximately 10 to 12 hours apart from Y" = apart medication Y min 600 max 720. "at least 4 hours after taking Y" = after medication Y 240.
     - One number is a minimum: "X 10 hours apart from Y" = min 600, max null. Set max only for a range or a limit: "10 to 12 hours" = min 600 max 720, "exactly 10 hours" = min 600 max 600, "no more than 10 hours" = max 600.
@@ -147,6 +158,11 @@ nonisolated enum LineParseService {
             let parts = str(raw, "time", max: 5).split(separator: ":").compactMap { Int($0) }
             if parts.count == 2, (0...23).contains(parts[0]), (0...59).contains(parts[1]) {
                 med.time = DoseTime(hour: parts[0], minute: parts[1])
+            }
+            if let rawDays = raw["days"] as? [Any] {
+                let days = Array(Set(rawDays.compactMap { ($0 as? NSNumber)?.intValue ?? ($0 as? String).flatMap { Int($0) } }
+                    .filter { (0...6).contains($0) })).sorted()
+                med.days = days.isEmpty ? nil : days
             }
             result.meds.append(med)
         }
@@ -449,7 +465,9 @@ final class LineParser {
     @ObservationIgnored private var cacheOrder: [String] = []
     @ObservationIgnored private let transport: Transport
     @ObservationIgnored private let defaults: UserDefaults?
-    private static let cacheKey = "bloom.lineParseCache.v9"
+    /// v10: lines are read again once so they pick up the days of the week ("every Tuesday & Thursday").
+    private static let cacheKey = "bloom.lineParseCache.v10"
+    private static let staleCacheKeys = ["bloom.lineParseCache.v9"]
     private static let cacheLimit = 300
     /// At most this many lines above are sent as context.
     static let maxContextLines = 4
@@ -462,6 +480,7 @@ final class LineParser {
            let stored = try? JSONDecoder().decode([Entry].self, from: data) {
             for entry in stored { cache[entry.line] = entry.parse; cacheOrder.append(entry.line) }
         }
+        for key in Self.staleCacheKeys where defaults?.object(forKey: key) != nil { defaults?.removeObject(forKey: key) }
         // Once: "apart" lines were read with max = min ("10 hours apart" as exactly 10 h). Read them again.
         if let defaults, !defaults.bool(forKey: Self.apartClearedKey) {
             let stale = cacheOrder.filter { $0.lowercased().contains("apart") }
@@ -716,22 +735,25 @@ enum RegimenAssembler {
 
         func key(_ name: String) -> String { name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
-        func resolve(_ rawName: String, line: String, dose: String = "", time: DoseTime? = nil, create: Bool) -> UUID? {
+        func resolve(_ rawName: String, line: String, dose: String = "", time: DoseTime? = nil, schedule: MedSchedule? = nil,
+                     create: Bool) -> UUID? {
             let k = key(rawName)
             guard !k.isEmpty else { return nil }
             if let id = byName[k] {
                 if let i = drafts.firstIndex(where: { $0.id == id }) {
                     if drafts[i].dose.isEmpty { drafts[i].dose = MedParseService.verifiedDosePart(dose, in: line) }
                     if drafts[i].fixedTime == nil, let time, line.contains(where: \.isNumber) { drafts[i].fixedTime = time }
+                    if drafts[i].schedule == nil, let schedule { drafts[i].schedule = schedule }
                 }
                 return id
             }
             guard create else { return nil }
             var draft: RegimenMedDraft
             if let match = existing.first(where: { key($0.name) == k || (!$0.friendlyName.isEmpty && key($0.friendlyName) == k) }) {
-                if let already = drafts.first(where: { $0.existingID == match.id }) {
-                    byName[k] = already.id
-                    return already.id
+                if let already = drafts.firstIndex(where: { $0.existingID == match.id }) {
+                    if drafts[already].schedule == nil, let schedule { drafts[already].schedule = schedule }
+                    byName[k] = drafts[already].id
+                    return drafts[already].id
                 }
                 draft = RegimenMedDraft(name: match.name, friendlyName: match.friendlyName, existingID: match.id)
                 byName[key(match.name)] = draft.id
@@ -742,6 +764,7 @@ enum RegimenAssembler {
             }
             draft.dose = MedParseService.verifiedDosePart(dose, in: line)
             if let time, line.contains(where: \.isNumber) { draft.fixedTime = time }
+            draft.schedule = schedule
             byName[k] = draft.id
             drafts.append(draft)
             namesForDescribe[draft.id] = draft.shortName
@@ -755,7 +778,7 @@ enum RegimenAssembler {
             var introduced: [UUID] = []
             for med in parse.meds {
                 let before = drafts.count
-                guard let id = resolve(med.name, line: line, dose: med.dose, time: med.time, create: true) else { continue }
+                guard let id = resolve(med.name, line: line, dose: med.dose, time: med.time, schedule: med.schedule, create: true) else { continue }
                 if drafts.count > before { introduced.append(id) }
                 if !summary.medIDs.contains(id) { summary.medIDs.append(id) }
                 if parse.meds.count == 1, ownLine[id] == nil { ownLine[id] = index }
@@ -794,6 +817,13 @@ enum RegimenAssembler {
                 if rules.contains(where: { $0.subjectID == rule.subjectID && $0.relation == rule.relation && $0.target == rule.target
                     && $0.targetMedicationID == rule.targetMedicationID && $0.targetMeal == rule.targetMeal
                     && $0.minMinutes == rule.minMinutes && $0.maxMinutes == rule.maxMinutes }) { continue }
+                // "X 12 h apart from Y" and "Y 12 h apart from X" are one rule: keep the first, and let this line show it.
+                if let mirror = rules.first(where: { RuleSignature.mirrors($0, rule) }) {
+                    if !summary.ruleIDs.contains(mirror.id) { summary.ruleIDs.append(mirror.id) }
+                    ruled.insert(subject)
+                    if let other = rule.targetMedicationID { ruled.insert(other) }
+                    continue
+                }
                 rules.append(rule)
                 summary.ruleIDs.append(rule.id)
                 ruled.insert(subject)
@@ -802,6 +832,13 @@ enum RegimenAssembler {
             }
             for rule in rules where summary.ruleIDs.contains(rule.id) {
                 summary.items.append(ScheduleEngine.describe(rule, names: namesForDescribe))
+            }
+            // "Protein every Tuesday & Thursday" → "Protein · Tue, Thu".
+            for med in parse.meds {
+                guard let schedule = med.schedule, case .weekdays = schedule,
+                      let id = byName[key(med.name)], let draft = drafts.first(where: { $0.id == id }) else { continue }
+                summary.items.append("\(draft.shortName) · \(schedule.summary)")
+                ruled.insert(id)
             }
             let unruled = introduced.filter { !ruled.contains($0) }
             if !unruled.isEmpty { unruledByLine[summaries.count] = unruled }

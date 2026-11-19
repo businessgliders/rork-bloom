@@ -34,6 +34,12 @@ nonisolated enum ScheduleCycle {
         return EngineRoutine.adjacent(previous: previous, next: next)
     }
 
+    /// The routine follows itself on at least one day (Mon → Tue): its next and previous days are the
+    /// same times as its own, so a dose that moves moves on the neighbouring days too.
+    static func continuesIntoItself(_ template: ScheduleTemplate) -> Bool {
+        template.days.contains { template.days.contains(($0 + 1) % 7) }
+    }
+
     /// Places every routine of the given list. Neighbours depend on each other's times, so this runs
     /// to a fixed point (at most 4 passes; one more pass than needed is cheap).
     static func generateAll(_ templates: [ScheduleTemplate], meds: (ScheduleTemplate) -> [EngineMed],
@@ -45,7 +51,8 @@ nonisolated enum ScheduleCycle {
             for i in current.indices {
                 let template = current[i]
                 let list = meds(template)
-                let routine = EngineRoutine(template, adjacent: adjacent(for: template, in: current))
+                let routine = EngineRoutine(template, adjacent: adjacent(for: template, in: current),
+                                            mirror: continuesIntoItself(template))
                 let result = ScheduleEngine.generate(routine: routine, meds: list, rules: rules(template.owner))
                 var t = template
                 t.doses = list.compactMap { med in

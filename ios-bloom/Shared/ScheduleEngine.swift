@@ -17,21 +17,47 @@ nonisolated struct EngineRoutine: Equatable {
     /// the day after is past 1440. Gap rules ("10 h apart") are checked against these too, so the
     /// schedule works as one continuous cycle across midnight.
     var adjacent: [UUID: [Int]]
+    /// The day after follows the same times as this day (the routine continues into itself, or tomorrow
+    /// follows today's routine unchanged): a dose that moves today moves tomorrow too, so its next-day copy
+    /// is its own time + 1440 rather than the stored one. Without this, a stale copy of the old time keeps
+    /// breaking an overnight gap after the dose has moved.
+    var mirrorNext = false
+    /// The same for the day before (only for a routine as a whole; a real day keeps what was actually taken).
+    var mirrorPrevious = false
 
-    init(wake: Int, bed: Int, meals: [EngineMeal], adjacent: [UUID: [Int]] = [:]) {
+    init(wake: Int, bed: Int, meals: [EngineMeal], adjacent: [UUID: [Int]] = [:], mirrorNext: Bool = false, mirrorPrevious: Bool = false) {
         self.wake = wake
         self.bed = bed
         self.meals = meals.sorted { $0.start < $1.start }
         self.adjacent = adjacent
+        self.mirrorNext = mirrorNext
+        self.mirrorPrevious = mirrorPrevious
     }
 
-    init(_ template: ScheduleTemplate, adjacent: [UUID: [Int]] = [:]) {
+    init(_ template: ScheduleTemplate, adjacent: [UUID: [Int]] = [:], mirror: Bool = false) {
         self.init(
             wake: template.wake.minutesFromMidnight,
             bed: template.bed.minutesFromMidnight,
             meals: template.meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
-            adjacent: adjacent
+            adjacent: adjacent,
+            mirrorNext: mirror,
+            mirrorPrevious: mirror
         )
+    }
+
+    /// A medication's doses on the neighbouring days, on this day's axis.
+    func neighbours(_ id: UUID, times: [UUID: Int]) -> [Int] {
+        var list = adjacent[id] ?? []
+        guard let t = times[id] else { return list }
+        if mirrorNext {
+            list.removeAll { $0 >= 1440 }
+            list.append(t + 1440)
+        }
+        if mirrorPrevious {
+            list.removeAll { $0 < 0 }
+            list.append(t - 1440)
+        }
+        return list
     }
 
     /// Neighbour-day minutes from the day before's and the day after's times (each in 0..<1440).
@@ -152,6 +178,11 @@ nonisolated enum ScheduleEngine {
             }
             times[med.id] = best?.time ?? lower
         }
+        // Doses tied by a gap rule ("AM and PM 12 h apart") that one-at-a-time placement can't satisfy: place
+        // them together, at the pair closest to where they landed that keeps every rule of both.
+        let pinnedIDs = Set(meds.compactMap { $0.pinned == nil ? nil : $0.id })
+        let movable = Set(meds.map(\.id)).subtracting(fixed.keys).subtracting(pinnedIDs)
+        times = placeLinked(times: times, movable: movable, routine: routine, rules: usable, range: lower...upper)
         // Rules only about doses that can't move anymore (already taken) are history, not something to fix.
         let placed = Set(meds.map(\.id)).subtracting(fixed.keys)
         let open = usable.filter { placed.contains($0.subjectID) || placed.contains($0.targetMedicationID ?? UUID()) }
@@ -201,12 +232,30 @@ nonisolated enum ScheduleEngine {
 
     // MARK: Checking
 
-    /// Every rule the given times break.
+    /// Every rule the given times break. A gap rule written both ways ("X 12 h apart from Y" and
+    /// "Y 12 h apart from X") is one rule, so it's reported once.
     static func violations(times: [UUID: Int], routine: EngineRoutine, rules: [ScheduleRule], names: [UUID: String]) -> [RuleViolation] {
-        rules.compactMap { rule in
+        var reported: [ScheduleRule] = []
+        return rules.compactMap { rule in
             guard let d = deficit(rule, times: times, routine: routine), d > 0 else { return nil }
+            guard !reported.contains(where: { mirrors($0, rule) }) else { return nil }
+            reported.append(rule)
             return explain(rule, times: times, routine: routine, names: names, deficit: d)
         }
+    }
+
+    /// "X apart from Y" and "Y apart from X" with the same gap: one instruction written both ways.
+    static func mirrors(_ a: ScheduleRule, _ b: ScheduleRule) -> Bool {
+        a.target == .medication && b.target == .medication && a.relation == .apart && b.relation == .apart
+            && a.subjectID == b.targetMedicationID && a.targetMedicationID == b.subjectID
+            && a.minMinutes == b.minMinutes && a.maxMinutes == b.maxMinutes
+    }
+
+    /// A gap rule between two medications ("10 h apart"): the doses it links.
+    static func linkedPair(_ rule: ScheduleRule) -> (UUID, UUID)? {
+        guard rule.target == .medication, rule.relation == .apart, let other = rule.targetMedicationID, other != rule.subjectID
+        else { return nil }
+        return (rule.subjectID, other)
     }
 
     /// How many minutes a rule is off by (0 = satisfied), or nil when it can't be checked yet.
@@ -285,8 +334,8 @@ nonisolated enum ScheduleEngine {
         let s = times[rule.subjectID]
         let o = times[id]
         if let s, let o { pairs.append((s, o)) }
-        if let s { pairs += (routine.adjacent[id] ?? []).map { (s, $0) } }
-        if let o { pairs += (routine.adjacent[rule.subjectID] ?? []).map { ($0, o) } }
+        if let s { pairs += routine.neighbours(id, times: times).map { (s, $0) } }
+        if let o { pairs += routine.neighbours(rule.subjectID, times: times).map { ($0, o) } }
         return pairs.min { abs($0.0 - $0.1) < abs($1.0 - $1.1) }.map { (subject: $0.0, other: $0.1) }
     }
 
@@ -534,8 +583,9 @@ nonisolated enum ScheduleEngine {
     /// After one item moved: the fewest moves that put things right. Each medication (in dependency order) that
     /// now breaks a rule moves to the closest time that keeps all of its rules; `locked` and pinned ones never move.
     /// Whatever still can't fit stays where it is and shows up as a violation.
+    /// `linked`: when a gap rule still breaks, try moving both of its doses together (see `placePair`).
     static func settle(times: [UUID: Int], locked: Set<UUID>, meds: [EngineMed], routine: EngineRoutine,
-                       rules: [ScheduleRule], range: ClosedRange<Int>) -> [UUID: Int] {
+                       rules: [ScheduleRule], range: ClosedRange<Int>, linked: Bool = true) -> [UUID: Int] {
         var result = times
         for _ in 0..<2 {
             for med in order(meds, rules: rules) where !locked.contains(med.id) && med.pinned == nil {
@@ -547,7 +597,49 @@ nonisolated enum ScheduleEngine {
                 result[med.id] = t
             }
         }
+        guard linked else { return result }
+        let movable = Set(meds.filter { $0.pinned == nil && !locked.contains($0.id) }.map(\.id))
+        return placeLinked(times: result, movable: movable, routine: routine, rules: rules, range: range)
+    }
+
+    /// Every gap rule between two movable doses that still breaks: both doses move together to the closest
+    /// pair that keeps every rule of both. Left as they are when no pair works.
+    static func placeLinked(times: [UUID: Int], movable: Set<UUID>, routine: EngineRoutine, rules: [ScheduleRule],
+                            range: ClosedRange<Int>) -> [UUID: Int] {
+        var result = times
+        for rule in rules {
+            guard let (a, b) = linkedPair(rule), movable.contains(a), movable.contains(b),
+                  result[a] != nil, result[b] != nil,
+                  (deficit(rule, times: result, routine: routine) ?? 0) > 0,
+                  let pair = placePair(a, b, times: result, routine: routine, rules: rules, range: range)
+            else { continue }
+            result[a] = pair.a
+            result[b] = pair.b
+        }
         return result
+    }
+
+    /// The two doses' times closest to where they are now (least total movement, 5-minute steps, inside `range`)
+    /// where every rule involving either holds, or nil when there is none.
+    static func placePair(_ a: UUID, _ b: UUID, times: [UUID: Int], routine: EngineRoutine, rules: [ScheduleRule],
+                          range: ClosedRange<Int>) -> (a: Int, b: Int)? {
+        guard let a0 = times[a], let b0 = times[b], range.lowerBound <= range.upperBound else { return nil }
+        let aRules = rules.filter { $0.involves(a) }
+        let candidates = stride(from: roundUp(range.lowerBound), through: range.upperBound, by: step)
+            .sorted { (abs($0 - a0), $0) < (abs($1 - a0), $1) }
+        var best: (cost: Int, a: Int, b: Int)?
+        for ta in candidates {
+            let da = abs(ta - a0)
+            if let best, da >= best.cost { break }
+            var trial = times
+            trial[a] = ta
+            guard let tb = closestValid(for: b, near: b0, times: trial, routine: routine, rules: rules, range: range) else { continue }
+            trial[b] = tb
+            guard aRules.allSatisfy({ (deficit($0, times: trial, routine: routine) ?? 0) == 0 }) else { continue }
+            let cost = da + abs(tb - b0)
+            if best == nil || cost < best!.cost { best = (cost, ta, tb) }
+        }
+        return best.map { (a: $0.a, b: $0.b) }
     }
 
     /// One-tap fixes for a broken rule: move its medication, move the other medication, or (today only) skip one.
@@ -570,6 +662,16 @@ nonisolated enum ScheduleEngine {
             result.append(ScheduleFix(title: "Take \(names[other] ?? "it") \(duration(abs(delta))) \(delta < 0 ? "earlier" : "later")",
                                       kind: .move(other, t)))
         }
+        // Neither dose can move alone, but both together can ("AM and PM 12 h apart").
+        if result.isEmpty, let (a, b) = linkedPair(rule), !fixed.contains(a), !fixed.contains(b),
+           !pinned.contains(a), !pinned.contains(b),
+           let pair = placePair(a, b, times: times, routine: routine, rules: rules, range: range) {
+            var moved = times
+            moved[a] = pair.a
+            moved[b] = pair.b
+            result.append(ScheduleFix(title: "Move \(names[a] ?? "it") to \(clock(pair.a)) and \(names[b] ?? "it") to \(clock(pair.b))",
+                                      kind: .retime(ScheduleFix.RoutineTweak(times: moved))))
+        }
         if allowSkip {
             if !fixed.contains(subject) {
                 result.append(ScheduleFix(title: "Skip \(names[subject] ?? "it") today", kind: .skip(subject)))
@@ -589,7 +691,7 @@ nonisolated enum ScheduleEngine {
         let brokenBefore = Set(violations(times: times, routine: routine, rules: rules, names: names).map(\.rule.id))
         func attempt(_ r: EngineRoutine) -> [UUID: Int]? {
             guard r.wake < r.bed else { return nil }
-            let settled = settle(times: times, locked: [], meds: meds, routine: r, rules: rules, range: r.wake...r.bed)
+            let settled = settle(times: times, locked: [], meds: meds, routine: r, rules: rules, range: r.wake...r.bed, linked: false)
             let after = Set(violations(times: settled, routine: r, rules: rules, names: names).map(\.rule.id))
             guard !after.contains(violation.rule.id), after.isSubset(of: brokenBefore) else { return nil }
             return settled
@@ -663,7 +765,18 @@ nonisolated enum ScheduleEngine {
             candidate[id] = t
             return (deficit(rule, times: candidate, routine: routine) ?? 0) == 0
         }
-        guard let first = window.first, let last = window.last else { return head + " No time in the day works for it." }
+        guard let first = window.first, let last = window.last else {
+            // A gap rule between two doses: try them together before saying nothing works.
+            if let (a, b) = linkedPair(rule), !fixed.contains(a), !fixed.contains(b) {
+                if placePair(a, b, times: times, routine: routine, rules: rules, range: range) != nil {
+                    return head + " \(names[a] ?? "One dose") and \(names[b] ?? "the other") need to move together."
+                }
+                if placePair(a, b, times: times, routine: routine, rules: [rule], range: 0...1435) != nil {
+                    return head + " Both doses would have to move, and no times between waking up and bedtime keep every rule."
+                }
+            }
+            return head + " No time in the day works for it."
+        }
         let inRange = window.filter { range.contains($0) }
         if inRange.isEmpty {
             if first > range.upperBound {

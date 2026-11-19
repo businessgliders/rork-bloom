@@ -9,6 +9,9 @@ struct RegimenMedDraft: Identifiable, Equatable {
     var dose: String = ""
     /// A clock time the user stated ("at 9 PM").
     var fixedTime: DoseTime?
+    /// Days of the week her line names ("every Tuesday & Thursday"). nil = the line doesn't say, so the
+    /// medication keeps the days it has (never reset to every day).
+    var schedule: MedSchedule?
     /// Set when this matches a medication they already have (keeps its history).
     var existingID: UUID?
 
@@ -124,7 +127,7 @@ extension AppStore {
     }
 
     func engineRoutine(_ template: ScheduleTemplate) -> EngineRoutine {
-        EngineRoutine(template, adjacent: templateAdjacent(template))
+        EngineRoutine(template, adjacent: templateAdjacent(template), mirror: ScheduleCycle.continuesIntoItself(template))
     }
 
     /// Broken rules for a template's current (possibly hand-edited) times.
@@ -211,6 +214,7 @@ extension AppStore {
                 if !draft.dose.trimmingCharacters(in: .whitespaces).isEmpty { med.dose = draft.dose }
                 med.managed = true
                 med.times = []
+                if let schedule = draft.schedule { med.schedule = schedule }
                 // Paused from its sheet: stays paused until she resumes it there.
                 if !med.paused { med.endDate = nil }
                 med.rulesConfirmed = confirmed
@@ -218,7 +222,8 @@ extension AppStore {
                 keptIDs.insert(med.id)
                 idMap[draft.id] = med.id
             } else {
-                var med = Medication(name: draft.name, friendlyName: draft.friendlyName, owner: owner, dose: draft.dose, times: [])
+                var med = Medication(name: draft.name, friendlyName: draft.friendlyName, owner: owner, dose: draft.dose,
+                                     schedule: draft.schedule ?? .daily, times: [])
                 med.managed = true
                 med.rulesConfirmed = confirmed
                 if isShared { med.takerID = memberID(for: owner) }

@@ -16,6 +16,16 @@ nonisolated enum RuleSignature {
         let k = key(rule)
         return list.contains { key($0) == k }
     }
+
+    /// "X apart from Y" and "Y apart from X" with the same gap: one instruction written both ways.
+    static func mirrors(_ a: ScheduleRule, _ b: ScheduleRule) -> Bool {
+        ScheduleEngine.mirrors(a, b)
+    }
+
+    /// Same rule, or the same gap rule written the other way round.
+    static func matches(_ a: ScheduleRule, _ b: ScheduleRule) -> Bool {
+        key(a) == key(b) || mirrors(a, b)
+    }
 }
 
 /// What she can tap on a rule row: the value, its step, and the words around it.
@@ -176,6 +186,7 @@ extension AppStore {
         var blocks: [String] = []
         for med in meds {
             var lines = [med.dose.isEmpty ? med.shortName : "\(med.shortName) \(med.dose)"]
+            if let days = med.schedule.daysNote { lines.append("\(med.shortName) every \(days)") }
             if let pin = templates(for: owner).lazy.compactMap({ $0.dose(for: med.id) }).first(where: \.pinned) {
                 lines.append("\(med.shortName) at \(ScheduleEngine.clock(pin.time.minutesFromMidnight))")
             }

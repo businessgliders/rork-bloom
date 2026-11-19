@@ -569,7 +569,7 @@ struct MedsOverviewView: View {
                 sheetMed = store.medications.first { $0.id == id }
             },
             identifier: entry.name,
-            timeNote: was
+            timeNote: MedsTodayList.joinedNote(store.medications.first { $0.id == id }?.schedule.daysNote, was)
         ) {
             if !entry.taken { grip(id: id, name: entry.name) }
         }

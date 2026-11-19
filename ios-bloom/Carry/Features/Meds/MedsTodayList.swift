@@ -282,6 +282,12 @@ struct MedsTodayList: View {
             : DayList.clock(date)
     }
 
+    /// "Tue, Thu · with breakfast": the med's days (when not every day) before its meal note.
+    static func joinedNote(_ parts: String?...) -> String? {
+        let text = parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        return text.isEmpty ? nil : text
+    }
+
     private func doseRow(_ instance: DoseInstance, entryID: String) -> some View {
         let med = instance.medication
         let movable = canMove(instance)
@@ -301,7 +307,7 @@ struct MedsTodayList: View {
             nameAction: { Haptics.tap(); onOpenMedication(med) },
             identifier: med.shortName,
             dotBounce: instance.isTaken,
-            subtitle: store.mealCaption(for: instance),
+            subtitle: Self.joinedNote(med.schedule.daysNote, store.mealCaption(for: instance)),
             subtitleColor: Theme.daySecondary
         ) {
             if canLog { check(instance, entryID: entryID) }

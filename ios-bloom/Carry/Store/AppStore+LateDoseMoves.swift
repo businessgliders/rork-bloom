@@ -150,7 +150,7 @@ extension AppStore {
                         kind: .logged, placement: .top, owner: owner, date: day, templateID: s.template.id,
                         routineName: s.template.displayName, subjectID: nil, subjectName: "", wake: s.wake, bed: s.bed,
                         meals: s.meals, times: times, original: s.times, fixed: s.fixed, pinned: s.pinned, range: s.range,
-                        adjacent: s.adjacent, isNextDay: offset == 1
+                        adjacent: s.adjacent, mirrorNext: s.mirrorNext, isNextDay: offset == 1
                     )
                     writeDayOverride(change, meals: nil, wake: nil, bed: nil)
                     guard let after = override(for: owner, on: day) else { continue }

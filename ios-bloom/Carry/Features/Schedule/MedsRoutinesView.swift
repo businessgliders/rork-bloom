@@ -347,7 +347,7 @@ struct MedsRoutinesView: View {
     @ViewBuilder
     private func problemsSection(_ result: RegimenAssembler.Result) -> some View {
         let t = routine
-        let violations = t.map { store.violations(in: $0) } ?? []
+        let violations = draftViolations(t, result)
         let lineTexts = Set(result.lines.map(\.text))
         let orphans = violations.filter { !lineTexts.contains(LineParseService.normalize($0.rule.sourceText)) }
         let rows: [(index: Int, raw: String, key: String, problem: String?, failed: String?, broken: [RuleViolation])] =
@@ -401,6 +401,23 @@ struct MedsRoutinesView: View {
                 }
             }
             .transition(.opacity)
+        }
+    }
+
+    /// The routine's broken rules, kept only while her lines still say them: a rule she removed or changed
+    /// stops warning as soon as the line changes, before "Update plan". Implied rules (wake to bed) always count.
+    private func draftViolations(_ t: ScheduleTemplate?, _ result: RegimenAssembler.Result) -> [RuleViolation] {
+        guard let t else { return [] }
+        let saved = Set(store.rules(for: owner).map(\.id))
+        let idMap = Dictionary(result.drafts.compactMap { d in d.existingID.map { (d.id, $0) } }, uniquingKeysWith: { a, _ in a })
+        let draftRules = result.rules.map { rule -> ScheduleRule in
+            var r = rule
+            r.subjectID = idMap[r.subjectID] ?? r.subjectID
+            if let target = r.targetMedicationID { r.targetMedicationID = idMap[target] ?? target }
+            return r
+        }
+        return store.violations(in: t).filter { v in
+            !saved.contains(v.rule.id) || draftRules.contains { RuleSignature.matches($0, v.rule) }
         }
     }
 

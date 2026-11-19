@@ -207,7 +207,8 @@ extension AppStore {
             kind: .dose, placement: .row(id), owner: owner, date: PregnancyMath.calendar.startOfDay(for: day),
             templateID: s.template.id, routineName: s.template.displayName, subjectID: id,
             subjectName: medicationNames[id] ?? "Medication", wake: s.wake, bed: s.bed, meals: s.meals,
-            times: option.times, original: s.times, fixed: s.fixed, pinned: s.pinned, range: s.range, adjacent: s.adjacent
+            times: option.times, original: s.times, fixed: s.fixed, pinned: s.pinned, range: s.range, adjacent: s.adjacent,
+            mirrorNext: s.mirrorNext
         )
         scheduleChange = change
         applyChange(scope)

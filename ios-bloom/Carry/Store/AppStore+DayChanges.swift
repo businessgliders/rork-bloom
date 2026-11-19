@@ -77,6 +77,10 @@ struct ScheduleChange: Identifiable, Equatable {
     var canApplyToday = true
     /// Doses on the day before (and for routines, the day after), for gap rules across midnight.
     var adjacent: [UUID: [Int]] = [:]
+    /// The day after takes the same times as this one (see `EngineRoutine.mirrorNext`).
+    var mirrorNext = false
+    /// A whole routine: the day before is the routine too.
+    var mirrorPrevious = false
     /// A late evening dose moves tomorrow's doses: the change is for tomorrow only.
     var isNextDay = false
     /// Rule edits: this person's whole rule set as it would be. Saved only on "Going forward".
@@ -98,7 +102,7 @@ struct ScheduleChange: Identifiable, Equatable {
     var routine: EngineRoutine {
         EngineRoutine(wake: wake, bed: bed,
                       meals: meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
-                      adjacent: adjacent)
+                      adjacent: adjacent, mirrorNext: mirrorNext, mirrorPrevious: mirrorPrevious)
     }
 
     /// Rules are broken and she hasn't chosen "Keep anyway".
@@ -135,11 +139,13 @@ struct DayState {
     var range: ClosedRange<Int>
     /// The day before's doses on this day's axis (negative minutes), taken ones at the time taken.
     var adjacent: [UUID: [Int]] = [:]
+    /// Tomorrow follows the same routine with no changes of its own, so it takes this day's times.
+    var mirrorNext = false
 
     var routine: EngineRoutine {
         EngineRoutine(wake: wake, bed: bed,
                       meals: meals.map { EngineMeal(name: $0.name, start: $0.time.minutesFromMidnight, duration: $0.durationMinutes) },
-                      adjacent: adjacent)
+                      adjacent: adjacent, mirrorNext: mirrorNext)
     }
 }
 
@@ -184,9 +190,13 @@ extension AppStore {
         let bed = r.bed.minutesFromMidnight
         var lower = wake
         if cal.isDateInToday(day) { lower = max(wake, ScheduleEngine.roundUp(minutes(.now))) }
+        var mirrorNext = false
+        if let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: day)) {
+            mirrorNext = override(for: owner, on: tomorrow) == nil && activeTemplate(for: owner, on: tomorrow)?.id == r.template.id
+        }
         return DayState(template: r.template, wake: wake, bed: bed, meals: r.meals, times: times, fixed: fixed,
                         pinned: pinned, meds: meds, range: lower...max(bed, lower),
-                        adjacent: neighbourDoses(owner, around: day))
+                        adjacent: neighbourDoses(owner, around: day), mirrorNext: mirrorNext)
     }
 
     /// Yesterday's real doses and tomorrow's planned ones on `day`'s minute axis, so overnight gap rules
@@ -336,7 +346,7 @@ extension AppStore {
             kind: kind, placement: placement, owner: owner, date: PregnancyMath.calendar.startOfDay(for: day),
             templateID: s.template.id, routineName: s.template.displayName, subjectID: subjectID, subjectName: subjectName,
             wake: s.wake, bed: s.bed, meals: s.meals, mealsChanged: mealsChanged, times: s.times, original: original,
-            fixed: s.fixed, pinned: s.pinned, range: s.range, adjacent: s.adjacent, isNextDay: nextDay
+            fixed: s.fixed, pinned: s.pinned, range: s.range, adjacent: s.adjacent, mirrorNext: s.mirrorNext, isNextDay: nextDay
         )
         refreshProblems(&change)
         switch kind {
@@ -358,7 +368,8 @@ extension AppStore {
     /// An edit on the Routines screen: re-places the routine's doses and shows the result inside it.
     func proposeRoutineChange(original: ScheduleTemplate, edited: ScheduleTemplate, movedDose: UUID? = nil) {
         let adjacent = ScheduleCycle.adjacent(for: edited, in: templates(for: original.owner))
-        let routine = EngineRoutine(edited, adjacent: adjacent)
+        let mirror = ScheduleCycle.continuesIntoItself(edited)
+        let routine = EngineRoutine(edited, adjacent: adjacent, mirror: mirror)
         let meds = engineMeds(for: edited)
         var times = Dictionary(edited.doses.map { ($0.medicationID, $0.time.minutesFromMidnight) }, uniquingKeysWith: { a, _ in a })
         for med in meds where times[med.id] == nil { times[med.id] = routine.wake }
@@ -376,7 +387,7 @@ extension AppStore {
             mealsChanged: true, wakeBedChanged: true, times: settled, original: before, fixed: [],
             pinned: Set(edited.doses.filter(\.pinned).map(\.medicationID)), range: range,
             draft: edited, canApplyToday: activeTemplate(for: original.owner, on: today)?.id == original.id,
-            adjacent: adjacent
+            adjacent: adjacent, mirrorNext: mirror, mirrorPrevious: mirror
         )
         refreshProblems(&change)
         scheduleChange = change
@@ -404,7 +415,8 @@ extension AppStore {
             wake: wake, bed: template.bed.minutesFromMidnight, meals: template.meals.sorted { $0.time < $1.time },
             mealsChanged: true, times: times, original: before, fixed: [],
             pinned: Set(template.doses.filter(\.pinned).map(\.medicationID)), range: wake...max(template.bed.minutesFromMidnight, wake),
-            draft: template, canApplyToday: activeTemplate(for: owner, on: today)?.id == template.id, adjacent: adjacent
+            draft: template, canApplyToday: activeTemplate(for: owner, on: today)?.id == template.id, adjacent: adjacent,
+            mirrorNext: ScheduleCycle.continuesIntoItself(placed), mirrorPrevious: ScheduleCycle.continuesIntoItself(placed)
         )
         change.draftRules = newRules
         change.generated = generated.templates
