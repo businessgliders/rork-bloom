@@ -87,8 +87,9 @@ nonisolated struct RemoteDailyNoteRow: Decodable, Sendable {
     }
 }
 
-/// Today's note: fetched on foreground and on every pull, shown once a day as a popup over Meds today
-/// or Journey, and reopened from the "Note" pill.
+/// Today's note: fetched on foreground and on every pull. The popup (once a day, only when
+/// `notePopup` is on) shows over Meds today or Journey; the "Note" pill and the notification open it
+/// any time. The typewriter plays on the first open of the day, whichever way it opened.
 @Observable
 final class DailyNoteCenter {
     static let shared = DailyNoteCenter()
@@ -149,10 +150,12 @@ final class DailyNoteCenter {
         fetch()
     }
 
-    /// The "Note" pill: the whole note at once.
+    /// The "Note" pill: the typewriter on the first open of the day, then the whole note at once.
     func reopen() {
         guard let note = todaysNote else { return }
-        presentation = Presentation(note: note, animate: false)
+        let first = !shownToday
+        markShown()
+        presentation = Presentation(note: note, animate: first)
     }
 
     func close() { presentation = nil }
@@ -210,7 +213,8 @@ final class DailyNoteCenter {
             presentation = Presentation(note: note, animate: first)
         } else if foregroundPending {
             foregroundPending = false
-            guard !shownToday else { return }
+            // The automatic popup only when she wants it; the pill and notification still open the note.
+            guard !shownToday, NotificationPrefs.shared.notePopup else { return }
             markShown()
             presentation = Presentation(note: note, animate: true)
         }

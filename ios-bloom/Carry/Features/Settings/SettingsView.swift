@@ -285,6 +285,25 @@ struct SettingsView: View {
             if prefs.dailyNote {
                 DatePicker("Time", selection: timeBinding, displayedComponents: .hourAndMinute)
                     .accessibilityIdentifier("settings-note-time")
+                Toggle("Show note when I open the app", isOn: notePopupBinding)
+                    .accessibilityIdentifier("settings-note-popup")
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Note length")
+                        Spacer(minLength: 12)
+                        Picker("Note length", selection: noteLengthBinding) {
+                            Text("Brief").tag(NotificationPrefs.NoteLength.brief)
+                            Text("Full").tag(NotificationPrefs.NoteLength.full)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Text("Brief is one or two lines.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.dayMuted)
+                }
+                .accessibilityIdentifier("settings-note-length")
                 Toggle("Include meds recap", isOn: prefBinding(\.includeRecap))
                     .accessibilityIdentifier("settings-include-recap")
                 if store.viewerRole == .mom && store.isShared {
@@ -302,6 +321,20 @@ struct SettingsView: View {
         .listRowBackground(Theme.dayCard)
         .disabled(!sync.isSignedIn)
         .animation(.snappy, value: prefs.dailyNote)
+    }
+
+    private var notePopupBinding: Binding<Bool> {
+        Binding(get: { prefs.notePopup }, set: { value in
+            Haptics.select()
+            Task { await prefs.setNotePopup(value) }
+        })
+    }
+
+    private var noteLengthBinding: Binding<NotificationPrefs.NoteLength> {
+        Binding(get: { prefs.noteLength }, set: { value in
+            Haptics.select()
+            Task { await prefs.setNoteLength(value) }
+        })
     }
 
     private func prefBinding(_ key: ReferenceWritableKeyPath<NotificationPrefs, Bool>) -> Binding<Bool> {

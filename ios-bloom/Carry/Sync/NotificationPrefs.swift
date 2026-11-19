@@ -14,8 +14,17 @@ final class NotificationPrefs {
     var noteMinutes = 8 * 60 + 30
     var includeRecap = true
     var shareRecapWithPartner = true
+    /// Whether the note pops up once a day on opening the app; off leaves the "Note" pill and the morning notification.
+    var notePopup = true
+    /// How long the server writes the note: one or two lines, or the full page.
+    var noteLength: NoteLength = .full
     private(set) var loaded = false
     private(set) var saveFailed = false
+
+    enum NoteLength: String, CaseIterable, Sendable {
+        case brief, full
+        var label: String { self == .brief ? "Brief" : "Full" }
+    }
 
     private static let cacheKey = "prefs.notification"
 
@@ -25,6 +34,8 @@ final class NotificationPrefs {
             noteMinutes = raw["minutes"] as? Int ?? noteMinutes
             includeRecap = raw["include_recap"] as? Bool ?? true
             shareRecapWithPartner = raw["share"] as? Bool ?? true
+            notePopup = raw["note_popup"] as? Bool ?? true
+            noteLength = NoteLength(rawValue: raw["note_length"] as? String ?? "") ?? .full
         }
     }
 
@@ -38,6 +49,8 @@ final class NotificationPrefs {
         var pregnancy_id: UUID?
         var daily_note: Bool
         var note_time: String
+        var note_popup: Bool?
+        var note_length: String?
         var include_recap: Bool
         var share_recap_with_partner: Bool
         var partner_alerts: Bool?
@@ -50,10 +63,30 @@ final class NotificationPrefs {
         set { UserDefaults.standard.set(newValue, forKey: Self.partnerAlertsDirtyKey) }
     }
 
+    /// The note popup / length settings couldn't be saved: the next load pushes the local values
+    /// instead of reading the server's (so the server never clobbers an unsaved change).
+    private static let notePrefsDirtyKey = "prefs.notePrefsDirty"
+    private var notePrefsDirty: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.notePrefsDirtyKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.notePrefsDirtyKey) }
+    }
+
     /// Partner alerts (`notification_prefs.partner_alerts`); the store keeps the local copy as a cache.
     func setPartnerAlerts(_ enabled: Bool) async {
         AppStore.shared.setPartnerAlertsEnabled(enabled)
         partnerAlertsDirty = true
+        await save()
+    }
+
+    func setNotePopup(_ enabled: Bool) async {
+        notePopup = enabled
+        notePrefsDirty = true
+        await save()
+    }
+
+    func setNoteLength(_ length: NoteLength) async {
+        noteLength = length
+        notePrefsDirty = true
         await save()
     }
 
@@ -63,7 +96,7 @@ final class NotificationPrefs {
         guard let uid = store.myUserID else { return }
         do {
             let rows: [Row] = try await Backend.client.from("notification_prefs")
-                .select("user_id,pregnancy_id,daily_note,note_time,include_recap,share_recap_with_partner,partner_alerts")
+                .select("user_id,pregnancy_id,daily_note,note_time,note_popup,note_length,include_recap,share_recap_with_partner,partner_alerts")
                 .eq("user_id", value: uid)
                 .limit(1)
                 .execute()
@@ -73,9 +106,16 @@ final class NotificationPrefs {
                 noteMinutes = Self.minutes(row.note_time) ?? noteMinutes
                 includeRecap = row.include_recap
                 shareRecapWithPartner = row.share_recap_with_partner
+                var needsSave = row.pregnancy_id != store.account?.pregnancyID
+                if notePrefsDirty {
+                    // A change this phone hasn't saved yet wins over the server's row.
+                    needsSave = true
+                } else {
+                    notePopup = row.note_popup ?? true
+                    noteLength = NoteLength(rawValue: row.note_length ?? "") ?? .full
+                }
                 cache()
                 loaded = true
-                var needsSave = row.pregnancy_id != store.account?.pregnancyID
                 if partnerAlertsDirty {
                     needsSave = true
                 } else if let remote = row.partner_alerts, remote != store.partnerAlertsEnabled {
@@ -97,7 +137,8 @@ final class NotificationPrefs {
         let store = AppStore.shared
         guard let uid = store.myUserID else { return }
         let row = Row(user_id: uid, pregnancy_id: store.account?.pregnancyID, daily_note: dailyNote,
-                      note_time: Self.timeString(noteMinutes), include_recap: includeRecap,
+                      note_time: Self.timeString(noteMinutes), note_popup: notePopup,
+                      note_length: noteLength.rawValue, include_recap: includeRecap,
                       share_recap_with_partner: shareRecapWithPartner,
                       partner_alerts: store.partnerAlertsEnabled)
         do {
@@ -106,6 +147,7 @@ final class NotificationPrefs {
                 .execute()
             saveFailed = false
             partnerAlertsDirty = false
+            notePrefsDirty = false
         } catch {
             saveFailed = true
         }
@@ -123,6 +165,7 @@ final class NotificationPrefs {
         UserDefaults.standard.set([
             "daily_note": dailyNote, "minutes": noteMinutes,
             "include_recap": includeRecap, "share": shareRecapWithPartner,
+            "note_popup": notePopup, "note_length": noteLength.rawValue,
         ], forKey: Self.cacheKey)
     }
 

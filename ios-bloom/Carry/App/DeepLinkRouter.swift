@@ -52,6 +52,11 @@ final class DeepLinkRouter {
 #if DEBUG
         case "debug-note":
             // Simulator testing: carry://debug-note (first open, types) or carry://debug-note?again=1.
+            // ?popup=off|on overrides the popup setting in memory, to test with the popup off.
+            if let value = query.first(where: { $0.name == "popup" })?.value?.lowercased(),
+               let on = value == "off" ? false : (value == "on" ? true : nil) {
+                NotificationPrefs.shared.notePopup = on
+            }
             DailyNoteCenter.shared.debugInsert(fresh: url.query?.contains("again") != true)
             return true
 #endif
