@@ -32,15 +32,23 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                coupleCard
-                pregnancySection
-                medsSection
-                dailyNoteSection
-                appSection
-                privacySection
-                accountSection
-                dangerSection
-                footer
+                if store.isTrackingPaused {
+                    // The paused tab: daily note, the tracking switch and the account.
+                    dailyNoteSection
+                    pregnancySection
+                    accountSection
+                    footer
+                } else {
+                    coupleCard
+                    pregnancySection
+                    medsSection
+                    dailyNoteSection
+                    appSection
+                    privacySection
+                    accountSection
+                    dangerSection
+                    footer
+                }
             }
             .listStyle(.insetGrouped)
             .listSectionSpacing(22)
@@ -141,6 +149,13 @@ struct SettingsView: View {
     private var otherName: String { store.name(for: store.viewerRole.other) }
     private var hasPregnancy: Bool { store.account?.pregnancyID != nil }
 
+    /// "Paused by Gurpreen on Nov 20. Turn on to bring back the timeline and weeks."
+    private var pausedTrackingCaption: String {
+        let when = (store.profile?.trackingPausedAt ?? store.now).formatted(.dateTime.month(.abbreviated).day())
+        let who = store.role(of: store.profile?.trackingPausedBy.flatMap(UUID.init)).map { store.name(for: $0) }
+        return "Paused\(who.map { " by \($0)" } ?? "") on \(when). Turn on to bring back the timeline and weeks."
+    }
+
     // MARK: Couple card
 
     private var coupleCard: some View {
@@ -213,29 +228,31 @@ struct SettingsView: View {
 
     private var pregnancySection: some View {
         Section {
-            NavigationLink {
-                EditDatesView()
-            } label: {
-                LabeledContent("Due date", value: store.profile?.dueDate.formatted(date: .abbreviated, time: .omitted) ?? "")
-            }
-            NavigationLink {
-                NameEditView(title: "Baby's nickname", field: .baby)
-            } label: {
-                LabeledContent("Baby's nickname", value: store.profile?.babyNickname.isEmpty == false ? store.profile!.babyNickname : "None")
-            }
-            HStack {
-                Text("Typical milestones")
-                Spacer()
-                Button("Restore") {
-                    store.restoreSuggestions()
-                    Haptics.success()
+            if !store.isTrackingPaused {
+                NavigationLink {
+                    EditDatesView()
+                } label: {
+                    LabeledContent("Due date", value: store.profile?.dueDate.formatted(date: .abbreviated, time: .omitted) ?? "")
                 }
-                .fontWeight(.semibold)
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("settings-restore-milestones")
+                NavigationLink {
+                    NameEditView(title: "Baby's nickname", field: .baby)
+                } label: {
+                    LabeledContent("Baby's nickname", value: store.profile?.babyNickname.isEmpty == false ? store.profile!.babyNickname : "None")
+                }
+                HStack {
+                    Text("Typical milestones")
+                    Spacer()
+                    Button("Restore") {
+                        store.restoreSuggestions()
+                        Haptics.success()
+                    }
+                    .fontWeight(.semibold)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("settings-restore-milestones")
+                }
             }
             captionedToggle("Pregnancy tracking",
-                            caption: "Turn off to hide the timeline, weeks and baby updates for both of you. Medications keep working.",
+                            caption: store.isTrackingPaused ? pausedTrackingCaption : "Turn off to hide the timeline, weeks and baby updates for both of you. Medications keep working.",
                             isOn: Binding(
                                 get: { !store.isTrackingPaused },
                                 set: { on in
@@ -245,9 +262,11 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings-tracking-toggle")
             VStack(alignment: .leading, spacing: 3) {
                 Button("Leave pregnancy", role: .destructive) { confirmLeave = true }
-                Text("Stop sharing with \(otherName). Your own data stays.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.dayMuted)
+                if !store.isTrackingPaused {
+                    Text("Stop sharing with \(otherName). Your own data stays.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.dayMuted)
+                }
             }
             .padding(.vertical, 2)
         } header: {
