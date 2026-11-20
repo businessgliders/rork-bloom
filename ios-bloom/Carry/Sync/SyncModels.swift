@@ -71,6 +71,9 @@ nonisolated struct RemotePregnancyRow: Decodable {
     var dating_date: String
     var due_date: String
     var invite_code: String
+    var tracking_paused: Bool?
+    var tracking_paused_at: Date?
+    var tracking_paused_by: UUID?
 }
 
 nonisolated struct RemoteMemberRow: Decodable {

@@ -923,6 +923,9 @@ final class SyncEngine {
             "dating_method": .string(profile.datingMethod.rawValue),
             "dating_date": .string(SyncFormat.day(profile.datingDate)),
             "due_date": .string(SyncFormat.day(profile.dueDate)),
+            "tracking_paused": .bool(profile.trackingPaused),
+            "tracking_paused_at": profile.trackingPausedAt.map { .string(SyncFormat.timestamp($0)) } ?? .null,
+            "tracking_paused_by": profile.trackingPausedBy.map { .string($0) } ?? .null,
         ]
     }
 

@@ -63,7 +63,10 @@ struct JourneyWidgetView: View {
     private var p: DayPalette { DayPalette(scheme: scheme) }
 
     var body: some View {
-        if let age = entry.age, let profile = entry.profile {
+        // Tracking paused: no week, baby or days to go — a quiet meds-only card instead.
+        if entry.profile?.trackingPaused == true {
+            pausedView
+        } else if let age = entry.age, let profile = entry.profile {
             switch family {
             case .systemMedium: medium(age: age, profile: profile)
             case .accessoryCircular:
@@ -90,6 +93,27 @@ struct JourneyWidgetView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(p.text)
                 Text("to start your journey")
+                    .font(.system(size: 13))
+                    .foregroundStyle(p.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+    }
+
+    @ViewBuilder
+    private var pausedView: some View {
+        switch family {
+        case .accessoryInline:
+            Text("Meds keep working")
+        default:
+            VStack(alignment: .leading, spacing: 5) {
+                CarryMark(size: family == .systemMedium ? 44 : 36, progress: 1, dotScale: 0.5, dotOffset: 0.19,
+                          arcColor: p.rose, dotColor: p.terra, trackColor: p.roseTint)
+                Spacer(minLength: 4)
+                Text("Pregnancy tracking paused")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(p.text)
+                Text("Medications keep working")
                     .font(.system(size: 13))
                     .foregroundStyle(p.secondary)
             }

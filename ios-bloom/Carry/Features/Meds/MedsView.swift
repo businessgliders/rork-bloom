@@ -240,7 +240,7 @@ struct MedsView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .accessibilityAddTraits(.isHeader)
-                if isToday, DailyNoteCenter.shared.todaysNote != nil {
+                if isToday, !store.isTrackingPaused, DailyNoteCenter.shared.todaysNote != nil {
                     notePill
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }

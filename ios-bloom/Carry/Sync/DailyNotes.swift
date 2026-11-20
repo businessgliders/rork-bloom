@@ -122,6 +122,9 @@ final class DailyNoteCenter {
     private var today: String { SyncFormat.day(.now) }
     var todaysNote: DailyNote? { note?.noteDate == today ? note : nil }
 
+    /// Pregnancy tracking paused: no notes anywhere — the week line inside them is why they exist.
+    private var paused: Bool { AppStore.shared.isTrackingPaused }
+
     private var shownToday: Bool { UserDefaults.standard.string(forKey: Self.shownKey) == today }
     private func markShown() { UserDefaults.standard.set(today, forKey: Self.shownKey) }
 
@@ -152,7 +155,7 @@ final class DailyNoteCenter {
 
     /// The "Note" pill: the typewriter on the first open of the day, then the whole note at once.
     func reopen() {
-        guard let note = todaysNote else { return }
+        guard !paused, let note = todaysNote else { return }
         let first = !shownToday
         markShown()
         presentation = Presentation(note: note, animate: first)
@@ -163,6 +166,12 @@ final class DailyNoteCenter {
     // MARK: Data
 
     func fetch() {
+        guard !paused else {
+            note = nil
+            presentation = nil
+            foregroundPending = false
+            return
+        }
         guard let uid = SyncEngine.shared.userID else {
             foregroundPending = false
             return
@@ -186,6 +195,11 @@ final class DailyNoteCenter {
 
     /// From a pull (or the fetch above). A note arriving while the app is open waits for the next foreground.
     func apply(_ newNote: DailyNote?) {
+        guard !paused else {
+            note = nil
+            presentation = nil
+            return
+        }
         if let newNote, newNote.noteDate == today {
             note = newNote
             if var p = presentation, p.note.id == newNote.id { p.note = newNote; presentation = p }
@@ -203,7 +217,7 @@ final class DailyNoteCenter {
     }
 
     private func considerShowing() {
-        guard rootReady, !homeScreens.isEmpty, presentation == nil else { return }
+        guard !paused, rootReady, !homeScreens.isEmpty, presentation == nil else { return }
         guard let note = todaysNote else { return }
         if notificationPending {
             notificationPending = false

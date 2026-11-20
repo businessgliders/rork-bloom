@@ -37,17 +37,24 @@ enum AppTab: String, CaseIterable, Identifiable {
 struct MainTabView: View {
     @Environment(SyncEngine.self) private var sync
     @Environment(AppStore.self) private var store
-    @State private var selection: AppTab = .journey
+    @State private var selection: AppTab = AppStore.shared.isTrackingPaused ? .meds : .journey
+
+    /// Paused: only Meds is left. The Journey and Timeline tabs come back on resume.
+    private var visibleTabs: [AppTab] { store.isTrackingPaused ? [.meds] : AppTab.allCases }
 
     var body: some View {
         TabView(selection: $selection) {
-            ForEach(AppTab.allCases) { tab in
+            ForEach(visibleTabs) { tab in
                 tab.content
                     .tabItem { Label(tab.title, systemImage: tab.symbol) }
                     .tag(tab)
             }
         }
         .sensoryFeedback(.selection, trigger: selection)
+        // Pause flips from Settings or the other phone: move off a tab that just went away.
+        .onChange(of: store.isTrackingPaused) { _, paused in
+            if paused && selection != .meds { selection = .meds }
+        }
         // carry://meds from a widget, the Live Activity or a notification.
         .onChange(of: DeepLinkRouter.shared.medsRequest) { _, _ in selection = .meds }
         .onAppear { if DeepLinkRouter.shared.pendingMeds { selection = .meds } }

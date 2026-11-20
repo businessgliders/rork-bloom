@@ -445,6 +445,21 @@ final class AppStore {
     /// The role of the person holding this phone. Without sharing, the app is the mom's.
     var viewerRole: MedOwner { isShared ? (account?.myRole ?? .mom) : .mom }
 
+    /// Pregnancy tracking is paused: pregnancy content hides on both phones while meds,
+    /// reminders and history keep working. Nothing is deleted; turning it back on restores everything.
+    var isTrackingPaused: Bool { profile?.trackingPaused == true }
+
+    /// Pauses (or resumes) pregnancy tracking on both phones. Quiet on purpose: no notification.
+    func setTrackingPaused(_ paused: Bool) {
+        guard var p = profile, p.trackingPaused != paused else { return }
+        p.trackingPaused = paused
+        p.trackingPausedAt = paused ? .now : nil
+        p.trackingPausedBy = paused ? account?.userID.uuidString : nil
+        profile = p
+        enqueue(.profile, "profile")
+        saveAndReschedule()
+    }
+
     func memberID(for role: MedOwner) -> UUID? {
         account?.members.first(where: { $0.role == role })?.userID
     }
@@ -897,7 +912,10 @@ final class AppStore {
                 datingMethod: DatingMethod(rawValue: p.dating_method) ?? .dueDate,
                 datingDate: datingDate,
                 embryoAgeDays: profile?.embryoAgeDays ?? 5,
-                dueDate: due
+                dueDate: due,
+                trackingPaused: p.tracking_paused ?? false,
+                trackingPausedAt: p.tracking_paused_at,
+                trackingPausedBy: p.tracking_paused_by?.uuidString
             )
         }
 

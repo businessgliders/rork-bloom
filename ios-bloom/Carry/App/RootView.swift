@@ -19,9 +19,9 @@ struct RootView: View {
         store.isOnboarded && !showSplash && !showSyncPrompt
     }
 
-    /// "Week 10, day 2 · about a strawberry"
+    /// "Week 10, day 2 · about a strawberry" — nothing while tracking is paused.
     private var noteSubtitle: String? {
-        guard let profile = store.profile else { return nil }
+        guard !store.isTrackingPaused, let profile = store.profile else { return nil }
         let age = profile.progress(on: store.now)
         // "day 0" reads oddly on the first day of a week, so it's just "Week 10" then.
         var text = age.days > 0 ? "Week \(age.weeks), day \(age.days)" : "Week \(age.weeks)"
@@ -70,7 +70,7 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.2), value: store.noFoodAlert?.id)
         .overlay {
             // One popup at a time: the no-food card first, then today's note.
-            if let note = notes.presentation, notesReady, store.noFoodAlert == nil, store.celebration == nil {
+            if let note = notes.presentation, notesReady, !store.isTrackingPaused, store.noFoodAlert == nil, store.celebration == nil {
                 GeometryReader { geo in
                     // Open Duo: centred in the left pane.
                     let twoPane = sizeClass == .regular && geo.size.width >= 800

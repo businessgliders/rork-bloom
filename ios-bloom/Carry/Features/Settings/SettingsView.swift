@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var remindersDenied = false
     @State private var showAccount = false
     @State private var confirmLeave = false
+    @State private var confirmPause = false
     @State private var confirmSignOut = false
     @State private var confirmDeleteAccount = false
     @State private var accountBusy = false
@@ -85,10 +86,23 @@ struct SettingsView: View {
             .sheet(isPresented: $showAccount) { AccountFlowView() }
             .confirmationDialog("Leave this pregnancy?", isPresented: $confirmLeave, titleVisibility: .visible) {
                 Button("Leave", role: .destructive) { runAccountAction { try await sync.leavePregnancy() } }
+                if !store.isTrackingPaused {
+                    // The toggle sits in the Pregnancy section right above the row this opens from.
+                    Button("Pause tracking instead") { confirmLeave = false; Haptics.tap() }
+                }
             } message: {
                 Text(store.account?.partnerJoined == true
-                     ? "\(otherName) keeps everything. This phone's copy is removed and you'll stay signed in."
-                     : "You're the only member, so the shared pregnancy and everything in it is deleted.")
+                     ? "\(otherName) keeps everything. This phone's copy is removed and you'll stay signed in.\nTo keep your medications, pause pregnancy tracking instead."
+                     : "You're the only member, so the shared pregnancy and everything in it is deleted.\nTo keep your medications, pause pregnancy tracking instead.")
+            }
+            .confirmationDialog("Pause pregnancy tracking?", isPresented: $confirmPause, titleVisibility: .visible) {
+                Button("Pause") {
+                    Haptics.tap()
+                    store.setTrackingPaused(true)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This hides pregnancy content on both phones. Your medications, reminders and history stay as they are. You can turn it back on anytime in Settings.")
             }
             .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) { runAccountAction { await sync.signOut() } }
@@ -137,7 +151,7 @@ struct SettingsView: View {
                             .foregroundStyle(Theme.dayText)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
-                        if let profile = store.profile {
+                        if let profile = store.profile, !store.isTrackingPaused {
                             let age = profile.progress(on: store.now)
                             Text("Week \(age.weeks) \u{00B7} due \(profile.dueDate.formatted(.dateTime.month(.abbreviated).day()))")
                                 .font(.system(size: 14))
@@ -214,6 +228,22 @@ struct SettingsView: View {
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("settings-restore-milestones")
             }
+            captionedToggle("Pregnancy tracking",
+                            caption: "Turn off to hide the timeline, weeks and baby updates for both of you. Medications keep working.",
+                            isOn: Binding(
+                                get: { !store.isTrackingPaused },
+                                set: { on in
+                                    Haptics.select()
+                                    if on { store.setTrackingPaused(false) } else { confirmPause = true }
+                                }))
+                .accessibilityIdentifier("settings-tracking-toggle")
+            VStack(alignment: .leading, spacing: 3) {
+                Button("Leave pregnancy", role: .destructive) { confirmLeave = true }
+                Text("Stop sharing with \(otherName). Your own data stays.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.dayMuted)
+            }
+            .padding(.vertical, 2)
         } header: {
             header("Pregnancy")
         }
@@ -458,15 +488,6 @@ struct SettingsView: View {
 
     private var dangerSection: some View {
         Section {
-            if hasPregnancy {
-                VStack(alignment: .leading, spacing: 3) {
-                    Button("Leave pregnancy", role: .destructive) { confirmLeave = true }
-                    Text("Stop sharing with \(otherName). Your own data stays.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.dayMuted)
-                }
-                .padding(.vertical, 2)
-            }
             Button("Delete all my data", role: .destructive) { confirmDelete = true }
             if sync.isSignedIn {
                 Button("Delete account", role: .destructive) { confirmDeleteAccount = true }

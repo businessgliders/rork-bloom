@@ -55,6 +55,48 @@ nonisolated struct PregnancyProfile: Codable, Equatable {
     /// Embryo age in days at transfer (IVF only): 3 or 5.
     var embryoAgeDays: Int
     var dueDate: Date
+    /// Tracking paused: pregnancy content hides on both phones; meds, reminders and history keep working.
+    var trackingPaused: Bool
+    var trackingPausedAt: Date?
+    /// The user id of whoever paused it.
+    var trackingPausedBy: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case momName, partnerName, babyNickname, datingMethod, datingDate, embryoAgeDays, dueDate
+        case trackingPaused, trackingPausedAt, trackingPausedBy
+    }
+
+    init(
+        momName: String, partnerName: String, babyNickname: String,
+        datingMethod: DatingMethod, datingDate: Date, embryoAgeDays: Int, dueDate: Date,
+        trackingPaused: Bool = false, trackingPausedAt: Date? = nil, trackingPausedBy: String? = nil
+    ) {
+        self.momName = momName
+        self.partnerName = partnerName
+        self.babyNickname = babyNickname
+        self.datingMethod = datingMethod
+        self.datingDate = datingDate
+        self.embryoAgeDays = embryoAgeDays
+        self.dueDate = dueDate
+        self.trackingPaused = trackingPaused
+        self.trackingPausedAt = trackingPausedAt
+        self.trackingPausedBy = trackingPausedBy
+    }
+
+    /// Files saved before tracking could be paused decode as not paused.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        momName = try c.decode(String.self, forKey: .momName)
+        partnerName = try c.decodeIfPresent(String.self, forKey: .partnerName) ?? ""
+        babyNickname = try c.decodeIfPresent(String.self, forKey: .babyNickname) ?? ""
+        datingMethod = try c.decode(DatingMethod.self, forKey: .datingMethod)
+        datingDate = try c.decode(Date.self, forKey: .datingDate)
+        embryoAgeDays = try c.decodeIfPresent(Int.self, forKey: .embryoAgeDays) ?? 5
+        dueDate = try c.decode(Date.self, forKey: .dueDate)
+        trackingPaused = try c.decodeIfPresent(Bool.self, forKey: .trackingPaused) ?? false
+        trackingPausedAt = try c.decodeIfPresent(Date.self, forKey: .trackingPausedAt)
+        trackingPausedBy = try c.decodeIfPresent(String.self, forKey: .trackingPausedBy)
+    }
 
     var babyName: String {
         let trimmed = babyNickname.trimmingCharacters(in: .whitespaces)
