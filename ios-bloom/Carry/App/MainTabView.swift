@@ -5,6 +5,13 @@ enum AppTab: String, CaseIterable, Identifiable {
     case journey
     case timeline
     case meds
+    /// Only while tracking is paused: Journey (where the gear lives) is hidden then.
+    case settings
+
+    /// The tab bar while tracking is on.
+    static let tracking: [AppTab] = [.journey, .timeline, .meds]
+    /// The tab bar while tracking is paused.
+    static let paused: [AppTab] = [.meds, .settings]
 
     var id: String { rawValue }
 
@@ -13,6 +20,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .journey: "Journey"
         case .timeline: "Timeline"
         case .meds: "Meds"
+        case .settings: "Settings"
         }
     }
 
@@ -21,6 +29,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .journey: "camera.macro"
         case .timeline: "calendar.day.timeline.leading"
         case .meds: "pills.fill"
+        case .settings: "gearshape"
         }
     }
 
@@ -30,6 +39,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .journey: JourneyView()
         case .timeline: TimelineTabView()
         case .meds: MedsView()
+        case .settings: SettingsView(asTab: true)
         }
     }
 }
@@ -39,8 +49,11 @@ struct MainTabView: View {
     @Environment(AppStore.self) private var store
     @State private var selection: AppTab = AppStore.shared.isTrackingPaused ? .meds : .journey
 
-    /// Paused: only Meds is left. The Journey and Timeline tabs come back on resume.
-    private var visibleTabs: [AppTab] { store.isTrackingPaused ? [.meds] : AppTab.allCases }
+    /// Set by Settings right before it pauses, so she lands on the Settings tab rather than Meds.
+    static var pausingFromSettings = false
+
+    /// Paused: Meds | Settings. Journey and Timeline come back on resume.
+    private var visibleTabs: [AppTab] { store.isTrackingPaused ? AppTab.paused : AppTab.tracking }
 
     var body: some View {
         TabView(selection: $selection) {
@@ -53,7 +66,16 @@ struct MainTabView: View {
         .sensoryFeedback(.selection, trigger: selection)
         // Pause flips from Settings or the other phone: move off a tab that just went away.
         .onChange(of: store.isTrackingPaused) { _, paused in
-            if paused && selection != .meds { selection = .meds }
+            if paused {
+                if Self.pausingFromSettings {
+                    selection = .settings
+                } else if !AppTab.paused.contains(selection) {
+                    selection = .meds
+                }
+                Self.pausingFromSettings = false
+            } else {
+                selection = .journey
+            }
         }
         // carry://meds from a widget, the Live Activity or a notification.
         .onChange(of: DeepLinkRouter.shared.medsRequest) { _, _ in selection = .meds }

@@ -26,6 +26,9 @@ struct SettingsView: View {
     @State private var showDebug = false
     @State private var permission = NotificationPermission.shared
 
+    /// True when Settings is shown as a tab (while tracking is paused), so there is nothing to dismiss.
+    var asTab: Bool = false
+
     var body: some View {
         NavigationStack {
             List {
@@ -47,10 +50,12 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.bold)
-                        .accessibilityIdentifier("settings-done")
+                if !asTab {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                            .fontWeight(.bold)
+                            .accessibilityIdentifier("settings-done")
+                    }
                 }
             }
             .onAppear { exportURL = store.exportFile() }
@@ -98,6 +103,7 @@ struct SettingsView: View {
             .confirmationDialog("Pause pregnancy tracking?", isPresented: $confirmPause, titleVisibility: .visible) {
                 Button("Pause") {
                     Haptics.tap()
+                    MainTabView.pausingFromSettings = true
                     store.setTrackingPaused(true)
                 }
                 Button("Cancel", role: .cancel) {}
